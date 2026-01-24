@@ -9,9 +9,14 @@ import {
   ClaimRole,
   CLAIM_ROLE_LABELS,
   SubmitClaimRequest,
+  SearchProviderResult,
+  ProviderCategory,
+  PROVIDER_CATEGORIES,
+  CreateProviderRequest,
 } from '../../core/models/claim.model';
 
-type ClaimStep = 'confirmation' | 'details' | 'documents' | 'review' | 'success';
+type ClaimStep = 'search' | 'confirmation' | 'details' | 'documents' | 'review' | 'success';
+type ClaimMode = 'search' | 'claim-existing' | 'add-new';
 
 interface UploadedDocument {
   file: File | null;
@@ -26,576 +31,774 @@ interface UploadedDocument {
   imports: [CommonModule, FormsModule],
   template: `
     <div class="max-w-2xl mx-auto">
-      <!-- No Provider ID - Show Instructions -->
-      @if (!providerId()) {
+      <!-- Has Existing Claim -->
+      @if (claimService.hasExistingClaim() && !isOwnProvider()) {
         <div class="card bg-base-200 border border-neutral">
           <div class="card-body text-center">
-            <div class="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-              <i class="pi pi-building text-primary text-3xl"></i>
+            <div class="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center mx-auto mb-4">
+              <i class="pi pi-exclamation-triangle text-warning text-3xl"></i>
             </div>
             <h2 class="card-title text-2xl font-bold justify-center">
-              Claim Your Business
+              Already Have a Business
             </h2>
-            <p class="text-secondary mb-6">
-              To claim your business, find it in the Wheelbase app and tap "Claim This Business".
+            <p class="text-secondary mb-4">
+              You already have a {{ claimService.existingClaim()?.claimStatus }} claim for
+              <span class="font-semibold">{{ claimService.existingClaim()?.businessName }}</span>.
+            </p>
+            <p class="text-sm text-secondary mb-6">
+              Each account can only claim one business at a time.
             </p>
 
-            <div class="bg-base-300 rounded-lg p-4 text-left mb-4">
-              <h3 class="font-semibold mb-2">How to claim:</h3>
-              <ol class="list-decimal list-inside space-y-2 text-sm text-secondary">
-                <li>Open the Wheelbase app on your phone</li>
-                <li>Search for your business in the Services section</li>
-                <li>Tap on your business to view its details</li>
-                <li>Tap "Claim This Business" button</li>
-                <li>You'll be redirected here to complete the claim process</li>
-              </ol>
-            </div>
-
-            <button (click)="signOut()" class="btn btn-ghost btn-sm mt-4">
-              Sign out and use a different account
+            <button (click)="goToDashboard()" class="btn btn-primary">
+              Go to Dashboard
             </button>
           </div>
         </div>
-      } @else {
-        <!-- Has Existing Claim -->
-        @if (claimService.hasExistingClaim() && !isOwnProvider()) {
-          <div class="card bg-base-200 border border-neutral">
-            <div class="card-body text-center">
-              <div class="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center mx-auto mb-4">
-                <i class="pi pi-exclamation-triangle text-warning text-3xl"></i>
+      }
+
+      <!-- Loading Provider (when has providerId) -->
+      @else if (providerId() && claimService.isLoading() && !provider()) {
+        <div class="card bg-base-200 border border-neutral">
+          <div class="card-body flex items-center justify-center py-12">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <p class="text-secondary mt-4">Loading business details...</p>
+          </div>
+        </div>
+      }
+
+      <!-- Provider Not Found (when has providerId) -->
+      @else if (providerId() && claimService.error() && !provider()) {
+        <div class="card bg-base-200 border border-neutral">
+          <div class="card-body text-center">
+            <div class="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center mx-auto mb-4">
+              <i class="pi pi-times-circle text-error text-3xl"></i>
+            </div>
+            <h2 class="card-title text-2xl font-bold justify-center">
+              Business Not Found
+            </h2>
+            <p class="text-secondary mb-6">
+              {{ claimService.error() }}
+            </p>
+            <button (click)="goToSearch()" class="btn btn-primary">
+              Search for Your Business
+            </button>
+          </div>
+        </div>
+      }
+
+      <!-- Provider Not Claimable -->
+      @else if (provider() && !provider()?.isClaimable) {
+        <div class="card bg-base-200 border border-neutral">
+          <div class="card-body text-center">
+            <div class="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center mx-auto mb-4">
+              <i class="pi pi-lock text-warning text-3xl"></i>
+            </div>
+            <h2 class="card-title text-2xl font-bold justify-center">
+              Business Already Claimed
+            </h2>
+            <p class="text-secondary mb-6">
+              <span class="font-semibold">{{ provider()?.businessName }}</span> has already been claimed by another user.
+            </p>
+            <p class="text-sm text-secondary mb-6">
+              If you believe this is an error, please contact support at
+              <a href="mailto:business@ridewheelbase.app" class="link link-primary">business&#64;ridewheelbase.app</a>
+            </p>
+            <button (click)="goToSearch()" class="btn btn-primary">
+              Search for Another Business
+            </button>
+          </div>
+        </div>
+      }
+
+      <!-- Main Claim Flow -->
+      @else {
+        <div class="card bg-base-200 border border-neutral">
+          <div class="card-body">
+            <!-- Progress Steps -->
+            <ul class="steps steps-horizontal w-full mb-6">
+              <li class="step" [class.step-primary]="stepIndex() >= 0">Find</li>
+              <li class="step" [class.step-primary]="stepIndex() >= 1">Confirm</li>
+              <li class="step" [class.step-primary]="stepIndex() >= 2">Details</li>
+              <li class="step" [class.step-primary]="stepIndex() >= 3">Documents</li>
+              <li class="step" [class.step-primary]="stepIndex() >= 4">Review</li>
+              <li class="step" [class.step-primary]="stepIndex() >= 5">Done</li>
+            </ul>
+
+            <!-- Error Alert -->
+            @if (claimService.error()) {
+              <div class="alert alert-error mb-4">
+                <i class="pi pi-exclamation-circle"></i>
+                <span>{{ claimService.error() }}</span>
+                <button class="btn btn-ghost btn-sm" (click)="claimService.clearError()">
+                  <i class="pi pi-times"></i>
+                </button>
               </div>
-              <h2 class="card-title text-2xl font-bold justify-center">
-                Already Have a Business
-              </h2>
-              <p class="text-secondary mb-4">
-                You already have a {{ claimService.existingClaim()?.claimStatus }} claim for
-                <span class="font-semibold">{{ claimService.existingClaim()?.businessName }}</span>.
-              </p>
-              <p class="text-sm text-secondary mb-6">
-                Each account can only claim one business at a time.
-              </p>
+            }
 
-              <button (click)="goToDashboard()" class="btn btn-primary">
-                Go to Dashboard
-              </button>
-            </div>
-          </div>
-        }
+            <!-- Step 0: Search -->
+            @if (currentStep() === 'search') {
+              <div>
+                <h2 class="text-xl font-bold mb-2">Find Your Business</h2>
+                <p class="text-secondary text-sm mb-4">
+                  Search for your business to claim it, or add a new listing if it doesn't exist yet.
+                </p>
 
-        <!-- Loading Provider -->
-        @else if (claimService.isLoading() && !provider()) {
-          <div class="card bg-base-200 border border-neutral">
-            <div class="card-body flex items-center justify-center py-12">
-              <span class="loading loading-spinner loading-lg text-primary"></span>
-              <p class="text-secondary mt-4">Loading business details...</p>
-            </div>
-          </div>
-        }
-
-        <!-- Provider Not Found or Not Claimable -->
-        @else if (claimService.error() && !provider()) {
-          <div class="card bg-base-200 border border-neutral">
-            <div class="card-body text-center">
-              <div class="w-16 h-16 rounded-full bg-error/10 flex items-center justify-center mx-auto mb-4">
-                <i class="pi pi-times-circle text-error text-3xl"></i>
-              </div>
-              <h2 class="card-title text-2xl font-bold justify-center">
-                Business Not Found
-              </h2>
-              <p class="text-secondary mb-6">
-                {{ claimService.error() }}
-              </p>
-              <button (click)="signOut()" class="btn btn-ghost btn-sm">
-                Sign out and try again
-              </button>
-            </div>
-          </div>
-        }
-
-        <!-- Provider Not Claimable -->
-        @else if (provider() && !provider()?.isClaimable) {
-          <div class="card bg-base-200 border border-neutral">
-            <div class="card-body text-center">
-              <div class="w-16 h-16 rounded-full bg-warning/10 flex items-center justify-center mx-auto mb-4">
-                <i class="pi pi-lock text-warning text-3xl"></i>
-              </div>
-              <h2 class="card-title text-2xl font-bold justify-center">
-                Business Already Claimed
-              </h2>
-              <p class="text-secondary mb-6">
-                <span class="font-semibold">{{ provider()?.businessName }}</span> has already been claimed by another user.
-              </p>
-              <p class="text-sm text-secondary mb-6">
-                If you believe this is an error, please contact support at
-                <a href="mailto:business@ridewheelbase.app" class="link link-primary">business&#64;ridewheelbase.app</a>
-              </p>
-              <button (click)="signOut()" class="btn btn-ghost btn-sm">
-                Sign out
-              </button>
-            </div>
-          </div>
-        }
-
-        <!-- Main Claim Flow -->
-        @else if (provider()?.isClaimable) {
-          <div class="card bg-base-200 border border-neutral">
-            <div class="card-body">
-              <!-- Progress Steps -->
-              <ul class="steps steps-horizontal w-full mb-6">
-                <li class="step" [class.step-primary]="stepIndex() >= 0">Confirm</li>
-                <li class="step" [class.step-primary]="stepIndex() >= 1">Details</li>
-                <li class="step" [class.step-primary]="stepIndex() >= 2">Documents</li>
-                <li class="step" [class.step-primary]="stepIndex() >= 3">Review</li>
-                <li class="step" [class.step-primary]="stepIndex() >= 4">Done</li>
-              </ul>
-
-              <!-- Error Alert -->
-              @if (claimService.error()) {
-                <div class="alert alert-error mb-4">
-                  <i class="pi pi-exclamation-circle"></i>
-                  <span>{{ claimService.error() }}</span>
-                  <button class="btn btn-ghost btn-sm" (click)="claimService.clearError()">
-                    <i class="pi pi-times"></i>
-                  </button>
-                </div>
-              }
-
-              <!-- Step 1: Confirmation -->
-              @if (currentStep() === 'confirmation') {
-                <div class="text-center">
-                  @if (provider()?.logoUrl) {
-                    <img
-                      [src]="provider()?.logoUrl"
-                      [alt]="provider()?.businessName"
-                      class="w-20 h-20 rounded-lg object-cover mx-auto mb-4"
+                <div class="form-control mb-4">
+                  <div class="join w-full">
+                    <input
+                      type="text"
+                      [(ngModel)]="searchQuery"
+                      class="input input-bordered join-item flex-1 bg-base-300"
+                      placeholder="Enter business name..."
+                      (keyup.enter)="performSearch()"
                     />
-                  } @else {
-                    <div class="w-20 h-20 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                      <i class="pi pi-building text-primary text-3xl"></i>
-                    </div>
-                  }
-
-                  <h2 class="text-xl font-bold mb-2">{{ provider()?.businessName }}</h2>
-                  <p class="text-secondary text-sm mb-1">{{ provider()?.category }}</p>
-                  @if (provider()?.address) {
-                    <p class="text-secondary text-sm mb-4">{{ provider()?.address }}</p>
-                  }
-                  @if (provider()?.city) {
-                    <p class="text-secondary text-sm mb-4">{{ provider()?.city }}</p>
-                  }
-
-                  <div class="divider"></div>
-
-                  <p class="text-lg mb-6">Is this your business?</p>
-
-                  <div class="flex gap-4 justify-center">
-                    <button (click)="signOut()" class="btn btn-ghost">
-                      No, sign out
-                    </button>
-                    <button (click)="nextStep()" class="btn btn-primary">
-                      Yes, this is my business
+                    <button
+                      (click)="performSearch()"
+                      class="btn btn-primary join-item"
+                      [disabled]="claimService.isSearching() || searchQuery.length < 2"
+                    >
+                      @if (claimService.isSearching()) {
+                        <span class="loading loading-spinner loading-sm"></span>
+                      } @else {
+                        <i class="pi pi-search"></i>
+                      }
+                      Search
                     </button>
                   </div>
+                  <label class="label">
+                    <span class="label-text-alt text-secondary">Enter at least 2 characters to search</span>
+                  </label>
                 </div>
-              }
 
-              <!-- Step 2: Business Details -->
-              @if (currentStep() === 'details') {
-                <div>
-                  <h2 class="text-xl font-bold mb-4">Your Details</h2>
+                <!-- Search Results -->
+                @if (hasSearched() && claimService.searchResults().length > 0) {
+                  <div class="space-y-2 mb-4">
+                    <p class="text-sm text-secondary">Found {{ claimService.searchResults().length }} result(s):</p>
+                    @for (result of claimService.searchResults(); track result.id) {
+                      <div class="card bg-base-300 hover:bg-base-100 transition-colors cursor-pointer" (click)="selectProvider(result)">
+                        <div class="card-body p-4 flex-row items-center gap-4">
+                          @if (result.logo_url) {
+                            <img [src]="result.logo_url" [alt]="result.business_name" class="w-12 h-12 rounded-lg object-cover" />
+                          } @else {
+                            <div class="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center">
+                              <i class="pi pi-building text-primary text-xl"></i>
+                            </div>
+                          }
+                          <div class="flex-1">
+                            <h3 class="font-semibold">{{ result.business_name }}</h3>
+                            <p class="text-sm text-secondary">{{ result.category | titlecase }} &bull; {{ result.city || 'Unknown location' }}</p>
+                          </div>
+                          <button class="btn btn-primary btn-sm">
+                            Claim
+                          </button>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
 
-                  <div class="space-y-4">
+                <!-- No Results -->
+                @if (hasSearched() && claimService.searchResults().length === 0 && !claimService.isSearching()) {
+                  <div class="text-center py-6 mb-4">
+                    <div class="w-16 h-16 rounded-full bg-secondary/10 flex items-center justify-center mx-auto mb-4">
+                      <i class="pi pi-search text-secondary text-2xl"></i>
+                    </div>
+                    <p class="text-secondary mb-2">No businesses found matching "{{ searchQuery }}"</p>
+                    <p class="text-sm text-secondary">Can't find your business? Add it below.</p>
+                  </div>
+                }
+
+                <!-- Add New Business CTA -->
+                <div class="divider">OR</div>
+                <div class="text-center">
+                  <button (click)="startAddNew()" class="btn btn-outline btn-primary">
+                    <i class="pi pi-plus mr-2"></i>
+                    Add Your Business
+                  </button>
+                  <p class="text-sm text-secondary mt-2">Don't see your business? Create a new listing.</p>
+                </div>
+              </div>
+            }
+
+            <!-- Step 1: Confirmation (Existing Provider) -->
+            @if (currentStep() === 'confirmation' && claimMode() === 'claim-existing') {
+              <div class="text-center">
+                @if (provider()?.logoUrl) {
+                  <img
+                    [src]="provider()?.logoUrl"
+                    [alt]="provider()?.businessName"
+                    class="w-20 h-20 rounded-lg object-cover mx-auto mb-4"
+                  />
+                } @else {
+                  <div class="w-20 h-20 rounded-lg bg-primary/10 flex items-center justify-center mx-auto mb-4">
+                    <i class="pi pi-building text-primary text-3xl"></i>
+                  </div>
+                }
+
+                <h2 class="text-xl font-bold mb-2">{{ provider()?.businessName }}</h2>
+                <p class="text-secondary text-sm mb-1">{{ provider()?.category }}</p>
+                @if (provider()?.address) {
+                  <p class="text-secondary text-sm mb-4">{{ provider()?.address }}</p>
+                }
+                @if (provider()?.city) {
+                  <p class="text-secondary text-sm mb-4">{{ provider()?.city }}</p>
+                }
+
+                <div class="divider"></div>
+
+                <p class="text-lg mb-6">Is this your business?</p>
+
+                <div class="flex gap-4 justify-center">
+                  <button (click)="goToSearch()" class="btn btn-ghost">
+                    No, go back
+                  </button>
+                  <button (click)="nextStep()" class="btn btn-primary">
+                    Yes, this is my business
+                  </button>
+                </div>
+              </div>
+            }
+
+            <!-- Step 1: Confirmation (Add New - Business Details) -->
+            @if (currentStep() === 'confirmation' && claimMode() === 'add-new') {
+              <div>
+                <h2 class="text-xl font-bold mb-4">Add Your Business</h2>
+                <p class="text-secondary text-sm mb-4">
+                  Enter your business details. This information will be visible to Wheelbase users.
+                </p>
+
+                <div class="space-y-4">
+                  <div class="form-control">
+                    <label class="label" for="newBusinessName">
+                      <span class="label-text">Business Name *</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="newBusinessName"
+                      [(ngModel)]="newBusinessName"
+                      class="input input-bordered w-full bg-base-300"
+                      placeholder="e.g., Juan's Motorcycle Repair"
+                      required
+                    />
+                  </div>
+
+                  <div class="form-control">
+                    <label class="label" for="newCategory">
+                      <span class="label-text">Category *</span>
+                    </label>
+                    <select
+                      id="newCategory"
+                      [(ngModel)]="newCategory"
+                      class="select select-bordered w-full bg-base-300"
+                      required
+                    >
+                      <option [value]="null" disabled>Select a category</option>
+                      @for (cat of categories; track cat.value) {
+                        <option [value]="cat.value">{{ cat.label }}</option>
+                      }
+                    </select>
+                  </div>
+
+                  <div class="form-control">
+                    <label class="label" for="newAddress">
+                      <span class="label-text">Street Address *</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="newAddress"
+                      [(ngModel)]="newAddress"
+                      class="input input-bordered w-full bg-base-300"
+                      placeholder="123 Main Street"
+                      required
+                    />
+                  </div>
+
+                  <div class="grid grid-cols-2 gap-4">
                     <div class="form-control">
-                      <label class="label" for="ownerName">
-                        <span class="label-text">Your Full Name</span>
+                      <label class="label" for="newCity">
+                        <span class="label-text">City *</span>
                       </label>
                       <input
                         type="text"
-                        id="ownerName"
-                        [(ngModel)]="ownerName"
+                        id="newCity"
+                        [(ngModel)]="newCity"
                         class="input input-bordered w-full bg-base-300"
-                        placeholder="Juan dela Cruz"
+                        placeholder="Manila"
                         required
                       />
                     </div>
-
                     <div class="form-control">
-                      <label class="label" for="role">
-                        <span class="label-text">Your Role</span>
-                      </label>
-                      <select
-                        id="role"
-                        [(ngModel)]="role"
-                        class="select select-bordered w-full bg-base-300"
-                        required
-                      >
-                        @for (r of roleOptions; track r.value) {
-                          <option [value]="r.value">{{ r.label }}</option>
-                        }
-                      </select>
-                    </div>
-
-                    <div class="form-control">
-                      <label class="label" for="contactPhone">
-                        <span class="label-text">Contact Phone</span>
+                      <label class="label" for="newStateProvince">
+                        <span class="label-text">State/Province</span>
                       </label>
                       <input
-                        type="tel"
-                        id="contactPhone"
-                        [(ngModel)]="contactPhone"
+                        type="text"
+                        id="newStateProvince"
+                        [(ngModel)]="newStateProvince"
                         class="input input-bordered w-full bg-base-300"
-                        placeholder="+63 XXX XXX XXXX"
-                        required
-                      />
-                    </div>
-
-                    <div class="form-control">
-                      <label class="label" for="businessEmail">
-                        <span class="label-text">Business Email</span>
-                      </label>
-                      <input
-                        type="email"
-                        id="businessEmail"
-                        [(ngModel)]="businessEmail"
-                        class="input input-bordered w-full bg-base-300"
-                        placeholder="business&#64;example.com"
-                        required
+                        placeholder="Metro Manila"
                       />
                     </div>
                   </div>
 
-                  <div class="flex gap-4 justify-between mt-6">
-                    <button (click)="prevStep()" class="btn btn-ghost">
-                      Back
-                    </button>
-                    <button
-                      (click)="nextStep()"
-                      class="btn btn-primary"
-                      [disabled]="!isDetailsValid()"
-                    >
-                      Continue
-                    </button>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                      <label class="label" for="newLat">
+                        <span class="label-text">Latitude *</span>
+                      </label>
+                      <input
+                        type="number"
+                        id="newLat"
+                        [(ngModel)]="newLat"
+                        class="input input-bordered w-full bg-base-300"
+                        placeholder="14.5995"
+                        step="0.0001"
+                        required
+                      />
+                    </div>
+                    <div class="form-control">
+                      <label class="label" for="newLng">
+                        <span class="label-text">Longitude *</span>
+                      </label>
+                      <input
+                        type="number"
+                        id="newLng"
+                        [(ngModel)]="newLng"
+                        class="input input-bordered w-full bg-base-300"
+                        placeholder="120.9842"
+                        step="0.0001"
+                        required
+                      />
+                    </div>
                   </div>
-                </div>
-              }
-
-              <!-- Step 3: Documents -->
-              @if (currentStep() === 'documents') {
-                <div>
-                  <h2 class="text-xl font-bold mb-2">Verification Documents</h2>
-                  <p class="text-secondary text-sm mb-4">
-                    Upload documents to verify you own or represent this business.
-                    At least one document is required.
+                  <p class="text-xs text-secondary">
+                    Tip: Find your coordinates on <a href="https://www.google.com/maps" target="_blank" class="link link-primary">Google Maps</a>
+                    - right-click your location and copy the coordinates.
                   </p>
-
-                  <div class="space-y-4">
-                    <!-- Government ID -->
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text">Government ID (Required)</span>
-                      </label>
-                      <div class="flex gap-2 items-center">
-                        @if (governmentId.url) {
-                          <div class="badge badge-success gap-1">
-                            <i class="pi pi-check"></i>
-                            Uploaded
-                          </div>
-                          <button (click)="clearDocument('governmentId')" class="btn btn-ghost btn-xs">
-                            <i class="pi pi-times"></i>
-                          </button>
-                        } @else {
-                          <input
-                            type="file"
-                            (change)="onFileSelected($event, 'governmentId')"
-                            accept="image/*,.pdf"
-                            class="file-input file-input-bordered file-input-sm w-full bg-base-300"
-                            [disabled]="governmentId.uploading"
-                          />
-                          @if (governmentId.uploading) {
-                            <span class="loading loading-spinner loading-sm"></span>
-                          }
-                        }
-                      </div>
-                      @if (governmentId.error) {
-                        <label class="label">
-                          <span class="label-text-alt text-error">{{ governmentId.error }}</span>
-                        </label>
-                      }
-                    </div>
-
-                    <!-- Business Permit -->
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text">Business Permit / Mayor's Permit</span>
-                      </label>
-                      <div class="flex gap-2 items-center">
-                        @if (businessPermit.url) {
-                          <div class="badge badge-success gap-1">
-                            <i class="pi pi-check"></i>
-                            Uploaded
-                          </div>
-                          <button (click)="clearDocument('businessPermit')" class="btn btn-ghost btn-xs">
-                            <i class="pi pi-times"></i>
-                          </button>
-                        } @else {
-                          <input
-                            type="file"
-                            (change)="onFileSelected($event, 'businessPermit')"
-                            accept="image/*,.pdf"
-                            class="file-input file-input-bordered file-input-sm w-full bg-base-300"
-                            [disabled]="businessPermit.uploading"
-                          />
-                          @if (businessPermit.uploading) {
-                            <span class="loading loading-spinner loading-sm"></span>
-                          }
-                        }
-                      </div>
-                      @if (businessPermit.error) {
-                        <label class="label">
-                          <span class="label-text-alt text-error">{{ businessPermit.error }}</span>
-                        </label>
-                      }
-                    </div>
-
-                    <!-- DTI/SEC Registration -->
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text">DTI/SEC Registration (Optional)</span>
-                      </label>
-                      <div class="flex gap-2 items-center">
-                        @if (dtiRegistration.url) {
-                          <div class="badge badge-success gap-1">
-                            <i class="pi pi-check"></i>
-                            Uploaded
-                          </div>
-                          <button (click)="clearDocument('dtiRegistration')" class="btn btn-ghost btn-xs">
-                            <i class="pi pi-times"></i>
-                          </button>
-                        } @else {
-                          <input
-                            type="file"
-                            (change)="onFileSelected($event, 'dtiRegistration')"
-                            accept="image/*,.pdf"
-                            class="file-input file-input-bordered file-input-sm w-full bg-base-300"
-                            [disabled]="dtiRegistration.uploading"
-                          />
-                          @if (dtiRegistration.uploading) {
-                            <span class="loading loading-spinner loading-sm"></span>
-                          }
-                        }
-                      </div>
-                      @if (dtiRegistration.error) {
-                        <label class="label">
-                          <span class="label-text-alt text-error">{{ dtiRegistration.error }}</span>
-                        </label>
-                      }
-                    </div>
-
-                    <!-- BIR Certificate -->
-                    <div class="form-control">
-                      <label class="label">
-                        <span class="label-text">BIR Certificate (Optional)</span>
-                      </label>
-                      <div class="flex gap-2 items-center">
-                        @if (birCertificate.url) {
-                          <div class="badge badge-success gap-1">
-                            <i class="pi pi-check"></i>
-                            Uploaded
-                          </div>
-                          <button (click)="clearDocument('birCertificate')" class="btn btn-ghost btn-xs">
-                            <i class="pi pi-times"></i>
-                          </button>
-                        } @else {
-                          <input
-                            type="file"
-                            (change)="onFileSelected($event, 'birCertificate')"
-                            accept="image/*,.pdf"
-                            class="file-input file-input-bordered file-input-sm w-full bg-base-300"
-                            [disabled]="birCertificate.uploading"
-                          />
-                          @if (birCertificate.uploading) {
-                            <span class="loading loading-spinner loading-sm"></span>
-                          }
-                        }
-                      </div>
-                      @if (birCertificate.error) {
-                        <label class="label">
-                          <span class="label-text-alt text-error">{{ birCertificate.error }}</span>
-                        </label>
-                      }
-                    </div>
-                  </div>
-
-                  <div class="flex gap-4 justify-between mt-6">
-                    <button (click)="prevStep()" class="btn btn-ghost">
-                      Back
-                    </button>
-                    <button
-                      (click)="nextStep()"
-                      class="btn btn-primary"
-                      [disabled]="!isDocumentsValid()"
-                    >
-                      Continue
-                    </button>
-                  </div>
                 </div>
-              }
 
-              <!-- Step 4: Review -->
-              @if (currentStep() === 'review') {
-                <div>
-                  <h2 class="text-xl font-bold mb-4">Review & Submit</h2>
-
-                  <div class="bg-base-300 rounded-lg p-4 mb-4">
-                    <h3 class="font-semibold mb-2">Business</h3>
-                    <p>{{ provider()?.businessName }}</p>
-                    <p class="text-secondary text-sm">{{ provider()?.category }}</p>
-                  </div>
-
-                  <div class="bg-base-300 rounded-lg p-4 mb-4">
-                    <h3 class="font-semibold mb-2">Your Details</h3>
-                    <div class="grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span class="text-secondary">Name:</span>
-                        <span class="ml-2">{{ ownerName }}</span>
-                      </div>
-                      <div>
-                        <span class="text-secondary">Role:</span>
-                        <span class="ml-2">{{ getRoleLabel(role) }}</span>
-                      </div>
-                      <div>
-                        <span class="text-secondary">Phone:</span>
-                        <span class="ml-2">{{ contactPhone }}</span>
-                      </div>
-                      <div>
-                        <span class="text-secondary">Email:</span>
-                        <span class="ml-2">{{ businessEmail }}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="bg-base-300 rounded-lg p-4 mb-4">
-                    <h3 class="font-semibold mb-2">Documents</h3>
-                    <div class="space-y-1 text-sm">
-                      <div class="flex items-center gap-2">
-                        @if (governmentId.url) {
-                          <i class="pi pi-check text-success"></i>
-                        } @else {
-                          <i class="pi pi-times text-error"></i>
-                        }
-                        <span>Government ID</span>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        @if (businessPermit.url) {
-                          <i class="pi pi-check text-success"></i>
-                        } @else {
-                          <i class="pi pi-minus text-secondary"></i>
-                        }
-                        <span>Business Permit</span>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        @if (dtiRegistration.url) {
-                          <i class="pi pi-check text-success"></i>
-                        } @else {
-                          <i class="pi pi-minus text-secondary"></i>
-                        }
-                        <span>DTI/SEC Registration</span>
-                      </div>
-                      <div class="flex items-center gap-2">
-                        @if (birCertificate.url) {
-                          <i class="pi pi-check text-success"></i>
-                        } @else {
-                          <i class="pi pi-minus text-secondary"></i>
-                        }
-                        <span>BIR Certificate</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="form-control mb-4">
-                    <label class="label cursor-pointer justify-start gap-2">
-                      <input
-                        type="checkbox"
-                        [(ngModel)]="confirmAuthorized"
-                        class="checkbox checkbox-primary"
-                      />
-                      <span class="label-text">
-                        I confirm that I am authorized to claim and manage this business
-                      </span>
-                    </label>
-                  </div>
-
-                  <div class="form-control mb-4">
-                    <label class="label cursor-pointer justify-start gap-2">
-                      <input
-                        type="checkbox"
-                        [(ngModel)]="confirmTerms"
-                        class="checkbox checkbox-primary"
-                      />
-                      <span class="label-text">
-                        I agree to the
-                        <a href="https://www.ridewheelbase.app/terms" target="_blank" class="link link-primary">
-                          Terms of Service
-                        </a>
-                        and
-                        <a href="https://www.ridewheelbase.app/privacy" target="_blank" class="link link-primary">
-                          Privacy Policy
-                        </a>
-                      </span>
-                    </label>
-                  </div>
-
-                  <div class="flex gap-4 justify-between mt-6">
-                    <button (click)="prevStep()" class="btn btn-ghost" [disabled]="isSubmitting()">
-                      Back
-                    </button>
-                    <button
-                      (click)="submitClaim()"
-                      class="btn btn-primary"
-                      [disabled]="!isReviewValid() || isSubmitting()"
-                    >
-                      @if (isSubmitting()) {
-                        <span class="loading loading-spinner loading-sm"></span>
-                        <span>Submitting...</span>
-                      } @else {
-                        <span>Submit Claim Request</span>
-                      }
-                    </button>
-                  </div>
-                </div>
-              }
-
-              <!-- Step 5: Success -->
-              @if (currentStep() === 'success') {
-                <div class="text-center py-4">
-                  <div class="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
-                    <i class="pi pi-check-circle text-success text-4xl"></i>
-                  </div>
-
-                  <h2 class="text-2xl font-bold mb-2">Claim Submitted!</h2>
-
-                  <p class="text-secondary mb-6">
-                    Your claim for <span class="font-semibold">{{ provider()?.businessName }}</span>
-                    has been submitted successfully.
-                  </p>
-
-                  <div class="bg-base-300 rounded-lg p-4 mb-6 text-left">
-                    <h3 class="font-semibold mb-2">What happens next?</h3>
-                    <ul class="list-disc list-inside space-y-1 text-sm text-secondary">
-                      <li>Our team will review your documents within 24-48 hours</li>
-                      <li>You'll receive an email notification when your claim is approved</li>
-                      <li>Once approved, you can manage your business from the dashboard</li>
-                    </ul>
-                  </div>
-
-                  <button (click)="signOut()" class="btn btn-primary">
-                    Done
+                <div class="flex gap-4 justify-between mt-6">
+                  <button (click)="goToSearch()" class="btn btn-ghost">
+                    Back
+                  </button>
+                  <button
+                    (click)="nextStep()"
+                    class="btn btn-primary"
+                    [disabled]="!isNewBusinessValid()"
+                  >
+                    Continue
                   </button>
                 </div>
-              }
-            </div>
+              </div>
+            }
+
+            <!-- Step 2: Business Details -->
+            @if (currentStep() === 'details') {
+              <div>
+                <h2 class="text-xl font-bold mb-4">Your Details</h2>
+
+                <div class="space-y-4">
+                  <div class="form-control">
+                    <label class="label" for="ownerName">
+                      <span class="label-text">Your Full Name</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="ownerName"
+                      [(ngModel)]="ownerName"
+                      class="input input-bordered w-full bg-base-300"
+                      placeholder="Juan dela Cruz"
+                      required
+                    />
+                  </div>
+
+                  <div class="form-control">
+                    <label class="label" for="role">
+                      <span class="label-text">Your Role</span>
+                    </label>
+                    <select
+                      id="role"
+                      [(ngModel)]="role"
+                      class="select select-bordered w-full bg-base-300"
+                      required
+                    >
+                      @for (r of roleOptions; track r.value) {
+                        <option [value]="r.value">{{ r.label }}</option>
+                      }
+                    </select>
+                  </div>
+
+                  <div class="form-control">
+                    <label class="label" for="contactPhone">
+                      <span class="label-text">Contact Phone</span>
+                    </label>
+                    <input
+                      type="tel"
+                      id="contactPhone"
+                      [(ngModel)]="contactPhone"
+                      class="input input-bordered w-full bg-base-300"
+                      placeholder="+63 XXX XXX XXXX"
+                      required
+                    />
+                  </div>
+
+                  <div class="form-control">
+                    <label class="label" for="businessEmail">
+                      <span class="label-text">Business Email</span>
+                    </label>
+                    <input
+                      type="email"
+                      id="businessEmail"
+                      [(ngModel)]="businessEmail"
+                      class="input input-bordered w-full bg-base-300"
+                      placeholder="business&#64;example.com"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div class="flex gap-4 justify-between mt-6">
+                  <button (click)="prevStep()" class="btn btn-ghost">
+                    Back
+                  </button>
+                  <button
+                    (click)="nextStep()"
+                    class="btn btn-primary"
+                    [disabled]="!isDetailsValid()"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            }
+
+            <!-- Step 3: Documents -->
+            @if (currentStep() === 'documents') {
+              <div>
+                <h2 class="text-xl font-bold mb-2">Verification Documents</h2>
+                <p class="text-secondary text-sm mb-4">
+                  Upload documents to verify you own or represent this business.
+                  At least one document is required.
+                </p>
+
+                <div class="space-y-4">
+                  <!-- Government ID -->
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text">Government ID (Required)</span>
+                    </label>
+                    <div class="flex gap-2 items-center">
+                      @if (governmentId.url) {
+                        <div class="badge badge-success gap-1">
+                          <i class="pi pi-check"></i>
+                          Uploaded
+                        </div>
+                        <button (click)="clearDocument('governmentId')" class="btn btn-ghost btn-xs">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      } @else {
+                        <input
+                          type="file"
+                          (change)="onFileSelected($event, 'governmentId')"
+                          accept="image/*,.pdf"
+                          class="file-input file-input-bordered file-input-sm w-full bg-base-300"
+                          [disabled]="governmentId.uploading"
+                        />
+                        @if (governmentId.uploading) {
+                          <span class="loading loading-spinner loading-sm"></span>
+                        }
+                      }
+                    </div>
+                    @if (governmentId.error) {
+                      <label class="label">
+                        <span class="label-text-alt text-error">{{ governmentId.error }}</span>
+                      </label>
+                    }
+                  </div>
+
+                  <!-- Business Permit -->
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text">Business Permit / Mayor's Permit</span>
+                    </label>
+                    <div class="flex gap-2 items-center">
+                      @if (businessPermit.url) {
+                        <div class="badge badge-success gap-1">
+                          <i class="pi pi-check"></i>
+                          Uploaded
+                        </div>
+                        <button (click)="clearDocument('businessPermit')" class="btn btn-ghost btn-xs">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      } @else {
+                        <input
+                          type="file"
+                          (change)="onFileSelected($event, 'businessPermit')"
+                          accept="image/*,.pdf"
+                          class="file-input file-input-bordered file-input-sm w-full bg-base-300"
+                          [disabled]="businessPermit.uploading"
+                        />
+                        @if (businessPermit.uploading) {
+                          <span class="loading loading-spinner loading-sm"></span>
+                        }
+                      }
+                    </div>
+                    @if (businessPermit.error) {
+                      <label class="label">
+                        <span class="label-text-alt text-error">{{ businessPermit.error }}</span>
+                      </label>
+                    }
+                  </div>
+
+                  <!-- DTI/SEC Registration -->
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text">DTI/SEC Registration (Optional)</span>
+                    </label>
+                    <div class="flex gap-2 items-center">
+                      @if (dtiRegistration.url) {
+                        <div class="badge badge-success gap-1">
+                          <i class="pi pi-check"></i>
+                          Uploaded
+                        </div>
+                        <button (click)="clearDocument('dtiRegistration')" class="btn btn-ghost btn-xs">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      } @else {
+                        <input
+                          type="file"
+                          (change)="onFileSelected($event, 'dtiRegistration')"
+                          accept="image/*,.pdf"
+                          class="file-input file-input-bordered file-input-sm w-full bg-base-300"
+                          [disabled]="dtiRegistration.uploading"
+                        />
+                        @if (dtiRegistration.uploading) {
+                          <span class="loading loading-spinner loading-sm"></span>
+                        }
+                      }
+                    </div>
+                    @if (dtiRegistration.error) {
+                      <label class="label">
+                        <span class="label-text-alt text-error">{{ dtiRegistration.error }}</span>
+                      </label>
+                    }
+                  </div>
+
+                  <!-- BIR Certificate -->
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text">BIR Certificate (Optional)</span>
+                    </label>
+                    <div class="flex gap-2 items-center">
+                      @if (birCertificate.url) {
+                        <div class="badge badge-success gap-1">
+                          <i class="pi pi-check"></i>
+                          Uploaded
+                        </div>
+                        <button (click)="clearDocument('birCertificate')" class="btn btn-ghost btn-xs">
+                          <i class="pi pi-times"></i>
+                        </button>
+                      } @else {
+                        <input
+                          type="file"
+                          (change)="onFileSelected($event, 'birCertificate')"
+                          accept="image/*,.pdf"
+                          class="file-input file-input-bordered file-input-sm w-full bg-base-300"
+                          [disabled]="birCertificate.uploading"
+                        />
+                        @if (birCertificate.uploading) {
+                          <span class="loading loading-spinner loading-sm"></span>
+                        }
+                      }
+                    </div>
+                    @if (birCertificate.error) {
+                      <label class="label">
+                        <span class="label-text-alt text-error">{{ birCertificate.error }}</span>
+                      </label>
+                    }
+                  </div>
+                </div>
+
+                <div class="flex gap-4 justify-between mt-6">
+                  <button (click)="prevStep()" class="btn btn-ghost">
+                    Back
+                  </button>
+                  <button
+                    (click)="nextStep()"
+                    class="btn btn-primary"
+                    [disabled]="!isDocumentsValid()"
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            }
+
+            <!-- Step 4: Review -->
+            @if (currentStep() === 'review') {
+              <div>
+                <h2 class="text-xl font-bold mb-4">Review & Submit</h2>
+
+                <div class="bg-base-300 rounded-lg p-4 mb-4">
+                  <h3 class="font-semibold mb-2">Business</h3>
+                  @if (claimMode() === 'add-new') {
+                    <p>{{ newBusinessName }}</p>
+                    <p class="text-secondary text-sm">{{ getCategoryLabel(newCategory) }}</p>
+                    <p class="text-secondary text-sm">{{ newAddress }}, {{ newCity }}</p>
+                  } @else {
+                    <p>{{ provider()?.businessName }}</p>
+                    <p class="text-secondary text-sm">{{ provider()?.category }}</p>
+                  }
+                </div>
+
+                <div class="bg-base-300 rounded-lg p-4 mb-4">
+                  <h3 class="font-semibold mb-2">Your Details</h3>
+                  <div class="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <span class="text-secondary">Name:</span>
+                      <span class="ml-2">{{ ownerName }}</span>
+                    </div>
+                    <div>
+                      <span class="text-secondary">Role:</span>
+                      <span class="ml-2">{{ getRoleLabel(role) }}</span>
+                    </div>
+                    <div>
+                      <span class="text-secondary">Phone:</span>
+                      <span class="ml-2">{{ contactPhone }}</span>
+                    </div>
+                    <div>
+                      <span class="text-secondary">Email:</span>
+                      <span class="ml-2">{{ businessEmail }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="bg-base-300 rounded-lg p-4 mb-4">
+                  <h3 class="font-semibold mb-2">Documents</h3>
+                  <div class="space-y-1 text-sm">
+                    <div class="flex items-center gap-2">
+                      @if (governmentId.url) {
+                        <i class="pi pi-check text-success"></i>
+                      } @else {
+                        <i class="pi pi-times text-error"></i>
+                      }
+                      <span>Government ID</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      @if (businessPermit.url) {
+                        <i class="pi pi-check text-success"></i>
+                      } @else {
+                        <i class="pi pi-minus text-secondary"></i>
+                      }
+                      <span>Business Permit</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      @if (dtiRegistration.url) {
+                        <i class="pi pi-check text-success"></i>
+                      } @else {
+                        <i class="pi pi-minus text-secondary"></i>
+                      }
+                      <span>DTI/SEC Registration</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      @if (birCertificate.url) {
+                        <i class="pi pi-check text-success"></i>
+                      } @else {
+                        <i class="pi pi-minus text-secondary"></i>
+                      }
+                      <span>BIR Certificate</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="form-control mb-4">
+                  <label class="label cursor-pointer justify-start gap-2">
+                    <input
+                      type="checkbox"
+                      [(ngModel)]="confirmAuthorized"
+                      class="checkbox checkbox-primary"
+                    />
+                    <span class="label-text">
+                      I confirm that I am authorized to claim and manage this business
+                    </span>
+                  </label>
+                </div>
+
+                <div class="form-control mb-4">
+                  <label class="label cursor-pointer justify-start gap-2">
+                    <input
+                      type="checkbox"
+                      [(ngModel)]="confirmTerms"
+                      class="checkbox checkbox-primary"
+                    />
+                    <span class="label-text">
+                      I agree to the
+                      <a href="https://www.ridewheelbase.app/terms" target="_blank" class="link link-primary">
+                        Terms of Service
+                      </a>
+                      and
+                      <a href="https://www.ridewheelbase.app/privacy" target="_blank" class="link link-primary">
+                        Privacy Policy
+                      </a>
+                    </span>
+                  </label>
+                </div>
+
+                <div class="flex gap-4 justify-between mt-6">
+                  <button (click)="prevStep()" class="btn btn-ghost" [disabled]="isSubmitting()">
+                    Back
+                  </button>
+                  <button
+                    (click)="submitClaim()"
+                    class="btn btn-primary"
+                    [disabled]="!isReviewValid() || isSubmitting()"
+                  >
+                    @if (isSubmitting()) {
+                      <span class="loading loading-spinner loading-sm"></span>
+                      <span>Submitting...</span>
+                    } @else {
+                      <span>Submit Claim Request</span>
+                    }
+                  </button>
+                </div>
+              </div>
+            }
+
+            <!-- Step 5: Success -->
+            @if (currentStep() === 'success') {
+              <div class="text-center py-4">
+                <div class="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center mx-auto mb-4">
+                  <i class="pi pi-check-circle text-success text-4xl"></i>
+                </div>
+
+                <h2 class="text-2xl font-bold mb-2">Claim Submitted!</h2>
+
+                <p class="text-secondary mb-6">
+                  @if (claimMode() === 'add-new') {
+                    Your business <span class="font-semibold">{{ newBusinessName }}</span>
+                    has been created and your claim has been submitted successfully.
+                  } @else {
+                    Your claim for <span class="font-semibold">{{ provider()?.businessName }}</span>
+                    has been submitted successfully.
+                  }
+                </p>
+
+                <div class="bg-base-300 rounded-lg p-4 mb-6 text-left">
+                  <h3 class="font-semibold mb-2">What happens next?</h3>
+                  <ul class="list-disc list-inside space-y-1 text-sm text-secondary">
+                    <li>Our team will review your documents within 24-48 hours</li>
+                    <li>You'll receive an email notification when your claim is approved</li>
+                    <li>Once approved, you can manage your business from the dashboard</li>
+                  </ul>
+                </div>
+
+                <button (click)="goToDashboard()" class="btn btn-primary">
+                  Go to Dashboard
+                </button>
+              </div>
+            }
           </div>
-        }
+        </div>
       }
     </div>
   `,
@@ -611,14 +814,31 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
   providerId = signal<string | null>(null);
 
   // Wizard state
-  currentStep = signal<ClaimStep>('confirmation');
+  currentStep = signal<ClaimStep>('search');
+  claimMode = signal<ClaimMode>('search');
   stepIndex = computed(() => {
-    const steps: ClaimStep[] = ['confirmation', 'details', 'documents', 'review', 'success'];
+    const steps: ClaimStep[] = ['search', 'confirmation', 'details', 'documents', 'review', 'success'];
     return steps.indexOf(this.currentStep());
   });
 
+  // Search state
+  searchQuery = '';
+  hasSearched = signal(false);
+
+  // New business form fields
+  newBusinessName = '';
+  newCategory: ProviderCategory | null = null;
+  newAddress = '';
+  newCity = '';
+  newStateProvince = '';
+  newLat: number | null = null;
+  newLng: number | null = null;
+
   // Provider info
   provider = computed(() => this.claimService.provider());
+
+  // Categories list
+  categories = PROVIDER_CATEGORIES;
 
   // Form fields
   ownerName = '';
@@ -652,17 +872,28 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
       this.providerId.set(id);
 
       if (id) {
+        // Direct link to claim a specific provider - skip search
+        this.claimMode.set('claim-existing');
+        this.currentStep.set('confirmation');
+
         // Fetch provider details
         await this.claimService.getProvider(id);
 
         // Also check if user already has a claim
         await this.claimService.checkExistingClaim();
+      } else {
+        // No provider ID - start with search
+        this.claimMode.set('search');
+        this.currentStep.set('search');
 
-        // Pre-fill email from session if available
-        const session = await this.authService['supabase']?.getSession();
-        if (session?.user?.email) {
-          this.businessEmail = session.user.email;
-        }
+        // Check if user already has a claim
+        await this.claimService.checkExistingClaim();
+      }
+
+      // Pre-fill email from session if available
+      const session = await this.authService['supabase']?.getSession();
+      if (session?.user?.email) {
+        this.businessEmail = session.user.email;
       }
     });
   }
@@ -677,8 +908,47 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
     return existingClaim?.providerId === currentProviderId;
   }
 
+  async performSearch(): Promise<void> {
+    if (this.searchQuery.length < 2) return;
+
+    this.hasSearched.set(true);
+    await this.claimService.searchProviders({
+      query: this.searchQuery,
+      limit: 10,
+    });
+  }
+
+  selectProvider(result: SearchProviderResult): void {
+    // Navigate to claim this provider
+    this.router.navigate(['/claim', result.id]);
+  }
+
+  startAddNew(): void {
+    this.claimMode.set('add-new');
+    this.currentStep.set('confirmation');
+    this.claimService.clearSearchResults();
+  }
+
+  goToSearch(): void {
+    this.claimMode.set('search');
+    this.currentStep.set('search');
+    this.providerId.set(null);
+
+    // Clear form state
+    this.newBusinessName = '';
+    this.newCategory = null;
+    this.newAddress = '';
+    this.newCity = '';
+    this.newStateProvince = '';
+    this.newLat = null;
+    this.newLng = null;
+
+    // Navigate to /claim without provider ID
+    this.router.navigate(['/claim']);
+  }
+
   nextStep(): void {
-    const steps: ClaimStep[] = ['confirmation', 'details', 'documents', 'review', 'success'];
+    const steps: ClaimStep[] = ['search', 'confirmation', 'details', 'documents', 'review', 'success'];
     const currentIndex = steps.indexOf(this.currentStep());
     if (currentIndex < steps.length - 1) {
       this.currentStep.set(steps[currentIndex + 1]);
@@ -686,11 +956,29 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
   }
 
   prevStep(): void {
-    const steps: ClaimStep[] = ['confirmation', 'details', 'documents', 'review', 'success'];
+    const steps: ClaimStep[] = ['search', 'confirmation', 'details', 'documents', 'review', 'success'];
     const currentIndex = steps.indexOf(this.currentStep());
     if (currentIndex > 0) {
-      this.currentStep.set(steps[currentIndex - 1]);
+      // If on confirmation and in add-new mode, go back to search
+      if (currentIndex === 1 && this.claimMode() === 'add-new') {
+        this.goToSearch();
+      } else {
+        this.currentStep.set(steps[currentIndex - 1]);
+      }
     }
+  }
+
+  isNewBusinessValid(): boolean {
+    return !!(
+      this.newBusinessName.trim() &&
+      this.newCategory &&
+      this.newAddress.trim() &&
+      this.newCity.trim() &&
+      this.newLat !== null &&
+      this.newLng !== null &&
+      this.newLat >= -90 && this.newLat <= 90 &&
+      this.newLng >= -180 && this.newLng <= 180
+    );
   }
 
   isDetailsValid(): boolean {
@@ -713,6 +1001,12 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
 
   getRoleLabel(role: ClaimRole): string {
     return CLAIM_ROLE_LABELS[role] || role;
+  }
+
+  getCategoryLabel(category: ProviderCategory | null): string {
+    if (!category) return '';
+    const cat = PROVIDER_CATEGORIES.find(c => c.value === category);
+    return cat?.label || category;
   }
 
   async onFileSelected(event: Event, documentType: string): Promise<void> {
@@ -771,28 +1065,58 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
   async submitClaim(): Promise<void> {
     if (!this.isReviewValid() || this.isSubmitting()) return;
 
-    const providerId = this.providerId();
-    if (!providerId) return;
-
     this.isSubmitting.set(true);
     this.claimService.clearError();
 
     try {
-      const request: SubmitClaimRequest = {
-        providerId,
-        ownerName: this.ownerName.trim(),
-        contactNumber: this.contactPhone.trim(),
-        email: this.businessEmail.trim(),
-        proofOfOwnershipUrl: this.governmentId.url || undefined,
-        businessPermitUrl: this.businessPermit.url || undefined,
-        taxIdDocumentUrl: this.dtiRegistration.url || undefined,
-        businessRegistrationNumber: this.birCertificate.url ? 'Uploaded' : undefined,
-      };
+      if (this.claimMode() === 'add-new') {
+        // Create and claim new provider
+        const request: CreateProviderRequest = {
+          businessName: this.newBusinessName.trim(),
+          category: this.newCategory!,
+          address: this.newAddress.trim(),
+          city: this.newCity.trim(),
+          stateProvince: this.newStateProvince.trim() || undefined,
+          countryCode: 'PH',
+          location: { lat: this.newLat!, lng: this.newLng! },
+          phoneNumber: this.contactPhone.trim() || undefined,
+          email: this.businessEmail.trim() || undefined,
+          ownerName: this.ownerName.trim(),
+          role: this.role,
+          documents: {
+            governmentId: this.governmentId.url!,
+            businessPermit: this.businessPermit.url || undefined,
+            dtiRegistration: this.dtiRegistration.url || undefined,
+            birCertificate: this.birCertificate.url || undefined,
+          },
+        };
 
-      const response = await this.claimService.submitClaim(request);
+        const response = await this.claimService.createAndClaimProvider(request);
 
-      if (response) {
-        this.currentStep.set('success');
+        if (response) {
+          this.currentStep.set('success');
+        }
+      } else {
+        // Claim existing provider
+        const currentProviderId = this.providerId();
+        if (!currentProviderId) return;
+
+        const request: SubmitClaimRequest = {
+          providerId: currentProviderId,
+          ownerName: this.ownerName.trim(),
+          contactNumber: this.contactPhone.trim(),
+          email: this.businessEmail.trim(),
+          proofOfOwnershipUrl: this.governmentId.url || undefined,
+          businessPermitUrl: this.businessPermit.url || undefined,
+          taxIdDocumentUrl: this.dtiRegistration.url || undefined,
+          businessRegistrationNumber: this.birCertificate.url ? 'Uploaded' : undefined,
+        };
+
+        const response = await this.claimService.submitClaim(request);
+
+        if (response) {
+          this.currentStep.set('success');
+        }
       }
     } catch (error) {
       console.error('Submit claim error:', error);

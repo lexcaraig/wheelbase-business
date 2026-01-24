@@ -6,6 +6,11 @@ import {
   ClaimSubmissionResponse,
   ExistingClaimInfo,
   ClaimStatus,
+  SearchProvidersRequest,
+  SearchProvidersResponse,
+  SearchProviderResult,
+  CreateProviderRequest,
+  CreateProviderResponse,
 } from '../models/claim.model';
 
 @Injectable({
@@ -17,16 +22,82 @@ export class ClaimService {
   private providerSignal = signal<ServiceProviderInfo | null>(null);
   private existingClaimSignal = signal<ExistingClaimInfo | null>(null);
 
+  // Search state
+  private searchResultsSignal = signal<SearchProviderResult[]>([]);
+  private searchLoadingSignal = signal<boolean>(false);
+
   readonly isLoading = computed(() => this.loadingSignal());
   readonly error = computed(() => this.errorSignal());
   readonly provider = computed(() => this.providerSignal());
   readonly existingClaim = computed(() => this.existingClaimSignal());
   readonly hasExistingClaim = computed(() => this.existingClaimSignal() !== null);
+  readonly searchResults = computed(() => this.searchResultsSignal());
+  readonly isSearching = computed(() => this.searchLoadingSignal());
 
   constructor(private supabase: SupabaseService) {}
 
   clearError(): void {
     this.errorSignal.set(null);
+  }
+
+  clearSearchResults(): void {
+    this.searchResultsSignal.set([]);
+  }
+
+  /**
+   * Search for claimable providers (unclaimed or rejected)
+   */
+  async searchProviders(request: SearchProvidersRequest): Promise<SearchProvidersResponse | null> {
+    try {
+      this.searchLoadingSignal.set(true);
+      this.errorSignal.set(null);
+
+      // Build query params for GET request
+      const params = new URLSearchParams({
+        query: request.query,
+        claimable: 'true',
+        limit: String(request.limit || 10),
+      });
+      if (request.city) params.append('city', request.city);
+      if (request.category) params.append('category', request.category);
+
+      // Call search-providers with GET
+      const response = await this.supabase.callFunction<SearchProvidersResponse>(
+        `search-providers?${params.toString()}`
+      );
+
+      this.searchResultsSignal.set(response.providers || []);
+      return response;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to search providers';
+      this.errorSignal.set(message);
+      return null;
+    } finally {
+      this.searchLoadingSignal.set(false);
+    }
+  }
+
+  /**
+   * Create a new provider AND claim it in one transaction
+   */
+  async createAndClaimProvider(request: CreateProviderRequest): Promise<CreateProviderResponse | null> {
+    try {
+      this.loadingSignal.set(true);
+      this.errorSignal.set(null);
+
+      const response = await this.supabase.callFunctionWithAuth<CreateProviderResponse>(
+        'create-and-claim-provider',
+        request
+      );
+
+      return response;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create and claim provider';
+      this.errorSignal.set(message);
+      return null;
+    } finally {
+      this.loadingSignal.set(false);
+    }
   }
 
   /**
@@ -189,5 +260,6 @@ export class ClaimService {
     this.providerSignal.set(null);
     this.existingClaimSignal.set(null);
     this.errorSignal.set(null);
+    this.searchResultsSignal.set([]);
   }
 }

@@ -40,13 +40,15 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
             </div>
             <h2 class="text-2xl font-bold mb-2">Welcome to Wheelbase Business</h2>
             <p class="text-secondary mb-6 max-w-md mx-auto">
-              You haven't claimed a business yet. Find your business in the Wheelbase app
-              and tap "Claim This Business" to get started.
+              Claim your existing business or add a new one to get started.
+              Once verified, you'll be able to manage your business profile,
+              respond to reviews, and connect with customers.
             </p>
             <div class="flex gap-4 justify-center">
-              <a href="https://www.ridewheelbase.app" target="_blank" class="btn btn-primary">
-                Download Wheelbase App
-              </a>
+              <button (click)="getStarted()" class="btn btn-primary">
+                <i class="pi pi-search mr-2"></i>
+                Get Started
+              </button>
             </div>
           </div>
         </div>
@@ -488,6 +490,10 @@ export class DashboardComponent {
     if (claim) {
       this.router.navigate(['/claim', claim.providerId]);
     }
+  }
+
+  getStarted(): void {
+    this.router.navigate(['/claim']);
   }
 
   getBusinessTypeLabel(): string {
