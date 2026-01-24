@@ -166,19 +166,9 @@ export class ClaimService {
         throw new Error('Not authenticated');
       }
 
-      // Convert file to base64
-      const base64 = await this.fileToBase64(file);
-
-      // Call upload-to-r2 edge function
-      const response = await this.supabase.callFunctionWithAuth<{ url: string }>(
-        'upload-to-r2',
-        {
-          folder: 'verification',
-          filename: `${documentType}_${Date.now()}`,
-          contentType: file.type,
-          base64Data: base64,
-        }
-      );
+      // Upload file to R2 using FormData
+      const filename = `${documentType}_${Date.now()}.${file.name.split('.').pop() || 'jpg'}`;
+      const response = await this.supabase.uploadFileToR2(file, 'verification', filename);
 
       return response.url;
     } catch (error) {
@@ -234,23 +224,6 @@ export class ClaimService {
     } finally {
       this.loadingSignal.set(false);
     }
-  }
-
-  /**
-   * Helper to convert file to base64
-   */
-  private fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const result = reader.result as string;
-        // Remove data URL prefix (e.g., "data:image/jpeg;base64,")
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = error => reject(error);
-    });
   }
 
   /**

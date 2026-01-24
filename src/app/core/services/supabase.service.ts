@@ -148,4 +148,41 @@ export class SupabaseService {
       throw new Error(error.message);
     }
   }
+
+  /**
+   * Upload file to R2 via edge function using FormData
+   */
+  async uploadFileToR2(file: File, folder: string, filename?: string): Promise<{ url: string }> {
+    const token = await this.getAccessToken();
+    if (!token) {
+      throw new Error('Not authenticated');
+    }
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('folder', folder);
+    if (filename) {
+      formData.append('filename', filename);
+    }
+
+    const response = await fetch(`${environment.supabaseUrl}/functions/v1/upload-to-r2`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: { message: 'Upload failed' } }));
+      throw new Error(errorData.error?.message || `Upload failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error?.message || 'Upload failed');
+    }
+
+    return data.data;
+  }
 }
