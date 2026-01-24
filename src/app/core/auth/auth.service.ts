@@ -3,21 +3,26 @@ import { Router } from '@angular/router';
 import { SupabaseService } from '../services/supabase.service';
 import {
   Business,
-  LoginRequest,
-  LoginResponse,
-  RegisterRequest,
-  RegisterResponse,
   UpdateProfileRequest,
-  BusinessType,
 } from '../models/business.model';
+import { ClaimStatus, ExistingClaimInfo } from '../models/claim.model';
 
 const BUSINESS_STORAGE_KEY = 'wheelbase-business-profile';
+const CLAIM_STORAGE_KEY = 'wheelbase-claim-status';
 
-export interface ClaimRequest {
-  inviteCode: string;
-  businessType: BusinessType;
-  phone?: string;
-  address?: string;
+/**
+ * Unified business status that handles both:
+ * - Legacy business accounts (from invite code flow)
+ * - Claimed service providers (from new claim flow)
+ */
+export interface UnifiedBusinessStatus {
+  type: 'business_account' | 'claimed_provider';
+  id: string;
+  businessName: string;
+  claimStatus: ClaimStatus;
+  verificationStatus?: string;
+  rejectionReason?: string;
+  submittedAt?: string;
 }
 
 @Injectable({
@@ -25,21 +30,91 @@ export interface ClaimRequest {
 })
 export class AuthService {
   private businessSignal = signal<Business | null>(null);
+  private claimedProviderSignal = signal<ExistingClaimInfo | null>(null);
   private loadingSignal = signal<boolean>(true);
   private errorSignal = signal<string | null>(null);
   private hasSessionSignal = signal<boolean>(false);
-  private needsBusinessSignal = signal<boolean>(false);
 
   // Computed signals
   readonly business = computed(() => this.businessSignal());
-  readonly isAuthenticated = computed(() => this.hasSessionSignal() && this.businessSignal() !== null);
+  readonly claimedProvider = computed(() => this.claimedProviderSignal());
+
+  // User has either a business account OR a claimed provider
+  readonly hasBusinessOrClaim = computed(() =>
+    this.businessSignal() !== null || this.claimedProviderSignal() !== null
+  );
+
+  // Full authentication: session + (business OR claimed provider with pending/verified status)
+  readonly isAuthenticated = computed(() => {
+    if (!this.hasSessionSignal()) return false;
+    if (this.businessSignal()) return true;
+    const claim = this.claimedProviderSignal();
+    return claim !== null && (claim.claimStatus === 'pending' || claim.claimStatus === 'verified');
+  });
+
   readonly hasSession = computed(() => this.hasSessionSignal());
-  readonly needsBusiness = computed(() => this.hasSessionSignal() && this.businessSignal() === null && !this.loadingSignal());
+
+  // User has session but no business AND no claim
+  readonly needsBusiness = computed(() =>
+    this.hasSessionSignal() &&
+    !this.businessSignal() &&
+    !this.claimedProviderSignal() &&
+    !this.loadingSignal()
+  );
+
   readonly isLoading = computed(() => this.loadingSignal());
   readonly error = computed(() => this.errorSignal());
-  readonly verificationStatus = computed(() => this.businessSignal()?.verificationStatus || null);
-  readonly isApproved = computed(() => this.businessSignal()?.verificationStatus === 'approved');
-  readonly isPending = computed(() => this.businessSignal()?.verificationStatus === 'pending');
+
+  // Verification status from either source
+  readonly verificationStatus = computed(() => {
+    if (this.businessSignal()) {
+      return this.businessSignal()?.verificationStatus || null;
+    }
+    return this.claimedProviderSignal()?.claimStatus || null;
+  });
+
+  readonly isApproved = computed(() =>
+    this.businessSignal()?.verificationStatus === 'approved' ||
+    this.claimedProviderSignal()?.claimStatus === 'verified'
+  );
+
+  readonly isPending = computed(() =>
+    this.businessSignal()?.verificationStatus === 'pending' ||
+    this.claimedProviderSignal()?.claimStatus === 'pending'
+  );
+
+  readonly isRejected = computed(() =>
+    this.businessSignal()?.verificationStatus === 'rejected' ||
+    this.claimedProviderSignal()?.claimStatus === 'rejected'
+  );
+
+  // Get unified business info
+  readonly unifiedBusiness = computed<UnifiedBusinessStatus | null>(() => {
+    const business = this.businessSignal();
+    if (business) {
+      return {
+        type: 'business_account',
+        id: business.id,
+        businessName: business.businessName,
+        claimStatus: business.verificationStatus as ClaimStatus,
+        verificationStatus: business.verificationStatus,
+        rejectionReason: business.rejectionReason || undefined,
+      };
+    }
+
+    const claim = this.claimedProviderSignal();
+    if (claim) {
+      return {
+        type: 'claimed_provider',
+        id: claim.providerId,
+        businessName: claim.businessName,
+        claimStatus: claim.claimStatus,
+        submittedAt: claim.submittedAt,
+      };
+    }
+
+    return null;
+  });
 
   constructor(
     private supabase: SupabaseService,
@@ -51,11 +126,12 @@ export class AuthService {
     this.supabase.session$.subscribe(async (session) => {
       if (session) {
         this.hasSessionSignal.set(true);
-        // Try to fetch business profile
-        await this.refreshProfile();
+        // Try to fetch business profile or claim status
+        await this.refreshAllStatus();
       } else {
         this.hasSessionSignal.set(false);
         this.businessSignal.set(null);
+        this.claimedProviderSignal.set(null);
         this.clearStorage();
       }
     });
@@ -66,87 +142,50 @@ export class AuthService {
       this.loadingSignal.set(true);
       this.errorSignal.set(null);
 
-      // Try to load business from storage
-      const storedBusiness = this.loadFromStorage();
+      // Try to load from storage
+      const storedBusiness = this.loadBusinessFromStorage();
       if (storedBusiness) {
         this.businessSignal.set(storedBusiness);
+      }
+
+      const storedClaim = this.loadClaimFromStorage();
+      if (storedClaim) {
+        this.claimedProviderSignal.set(storedClaim);
       }
 
       // Check if we have a valid session
       const session = await this.supabase.getSession();
       if (session) {
         this.hasSessionSignal.set(true);
-        // Refresh business profile
-        await this.refreshProfile();
+        // Refresh from server
+        await this.refreshAllStatus();
       } else {
         // No session, clear any stored data
         this.hasSessionSignal.set(false);
         this.clearStorage();
         this.businessSignal.set(null);
+        this.claimedProviderSignal.set(null);
       }
     } catch (error) {
       console.error('Auth initialization error:', error);
       this.clearStorage();
       this.businessSignal.set(null);
+      this.claimedProviderSignal.set(null);
     } finally {
       this.loadingSignal.set(false);
     }
   }
 
   /**
-   * Register a new business account
+   * Refresh both business profile and claim status
    */
-  async register(request: RegisterRequest): Promise<RegisterResponse> {
-    try {
-      this.loadingSignal.set(true);
-      this.errorSignal.set(null);
+  private async refreshAllStatus(): Promise<void> {
+    // Try to fetch business profile (legacy)
+    await this.refreshProfile();
 
-      const response = await this.supabase.callFunction<RegisterResponse>(
-        'business-register',
-        request
-      );
-
-      return response;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Registration failed';
-      this.errorSignal.set(message);
-      throw error;
-    } finally {
-      this.loadingSignal.set(false);
-    }
-  }
-
-  /**
-   * Login with email and password (legacy - for businesses with separate accounts)
-   */
-  async login(request: LoginRequest): Promise<void> {
-    try {
-      this.loadingSignal.set(true);
-      this.errorSignal.set(null);
-
-      const response = await this.supabase.callFunction<LoginResponse>(
-        'business-login',
-        request
-      );
-
-      // Set the session
-      await this.supabase.setSession(
-        response.session.accessToken,
-        response.session.refreshToken
-      );
-
-      // Store business profile
-      this.businessSignal.set(response.business);
-      this.saveToStorage(response.business);
-
-      // Navigate to dashboard
-      await this.router.navigate(['/dashboard']);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Login failed';
-      this.errorSignal.set(message);
-      throw error;
-    } finally {
-      this.loadingSignal.set(false);
+    // If no business, check for claimed provider
+    if (!this.businessSignal()) {
+      await this.refreshClaimStatus();
     }
   }
 
@@ -169,33 +208,6 @@ export class AuthService {
   }
 
   /**
-   * Claim a business using an invite code (for users who signed in with Google)
-   */
-  async claimBusiness(request: ClaimRequest): Promise<Business> {
-    try {
-      this.loadingSignal.set(true);
-      this.errorSignal.set(null);
-
-      const response = await this.supabase.callFunctionWithAuth<{ business: Business; message: string }>(
-        'business-claim',
-        request
-      );
-
-      // Store business profile
-      this.businessSignal.set(response.business);
-      this.saveToStorage(response.business);
-
-      return response.business;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to claim business';
-      this.errorSignal.set(message);
-      throw error;
-    } finally {
-      this.loadingSignal.set(false);
-    }
-  }
-
-  /**
    * Logout the current user
    */
   async logout(): Promise<void> {
@@ -206,12 +218,13 @@ export class AuthService {
     } finally {
       this.clearStorage();
       this.businessSignal.set(null);
+      this.claimedProviderSignal.set(null);
       await this.router.navigate(['/login']);
     }
   }
 
   /**
-   * Refresh the business profile from the server
+   * Refresh the business profile from the server (legacy flow)
    */
   async refreshProfile(): Promise<Business | null> {
     try {
@@ -220,21 +233,43 @@ export class AuthService {
       );
 
       this.businessSignal.set(business);
-      this.saveToStorage(business);
+      this.saveBusinessToStorage(business);
 
       return business;
     } catch (error) {
-      console.error('Profile refresh error:', error);
-      // If we get an auth error, logout
-      if (error instanceof Error && error.message.includes('session')) {
-        await this.logout();
-      }
+      // Expected error if user doesn't have a business account
+      console.log('No business account found (expected for claim flow users)');
+      this.businessSignal.set(null);
       return null;
     }
   }
 
   /**
-   * Update the business profile
+   * Refresh claim status for claimed service provider
+   */
+  async refreshClaimStatus(): Promise<ExistingClaimInfo | null> {
+    try {
+      const claim = await this.supabase.callFunctionWithAuth<ExistingClaimInfo | null>(
+        'get-user-claim-status'
+      );
+
+      this.claimedProviderSignal.set(claim);
+      if (claim) {
+        this.saveClaimToStorage(claim);
+      } else {
+        localStorage.removeItem(CLAIM_STORAGE_KEY);
+      }
+
+      return claim;
+    } catch (error) {
+      console.log('No claim status found');
+      this.claimedProviderSignal.set(null);
+      return null;
+    }
+  }
+
+  /**
+   * Update the business profile (legacy flow)
    */
   async updateProfile(updates: UpdateProfileRequest): Promise<Business> {
     try {
@@ -256,7 +291,7 @@ export class AuthService {
 
       const business = response.data.data as Business;
       this.businessSignal.set(business);
-      this.saveToStorage(business);
+      this.saveBusinessToStorage(business);
 
       return business;
     } catch (error) {
@@ -275,8 +310,8 @@ export class AuthService {
     this.errorSignal.set(null);
   }
 
-  // Storage helpers
-  private saveToStorage(business: Business): void {
+  // Storage helpers - Business
+  private saveBusinessToStorage(business: Business): void {
     try {
       localStorage.setItem(BUSINESS_STORAGE_KEY, JSON.stringify(business));
     } catch (error) {
@@ -284,7 +319,7 @@ export class AuthService {
     }
   }
 
-  private loadFromStorage(): Business | null {
+  private loadBusinessFromStorage(): Business | null {
     try {
       const stored = localStorage.getItem(BUSINESS_STORAGE_KEY);
       return stored ? JSON.parse(stored) : null;
@@ -294,9 +329,29 @@ export class AuthService {
     }
   }
 
+  // Storage helpers - Claim
+  private saveClaimToStorage(claim: ExistingClaimInfo): void {
+    try {
+      localStorage.setItem(CLAIM_STORAGE_KEY, JSON.stringify(claim));
+    } catch (error) {
+      console.error('Failed to save claim to storage:', error);
+    }
+  }
+
+  private loadClaimFromStorage(): ExistingClaimInfo | null {
+    try {
+      const stored = localStorage.getItem(CLAIM_STORAGE_KEY);
+      return stored ? JSON.parse(stored) : null;
+    } catch (error) {
+      console.error('Failed to load claim from storage:', error);
+      return null;
+    }
+  }
+
   private clearStorage(): void {
     try {
       localStorage.removeItem(BUSINESS_STORAGE_KEY);
+      localStorage.removeItem(CLAIM_STORAGE_KEY);
     } catch (error) {
       console.error('Failed to clear storage:', error);
     }

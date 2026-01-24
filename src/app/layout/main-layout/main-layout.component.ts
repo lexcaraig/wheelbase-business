@@ -2,7 +2,6 @@ import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
-import { VERIFICATION_STATUS_LABELS } from '../../core/models/business.model';
 
 interface NavItem {
   label: string;
@@ -16,37 +15,37 @@ interface NavItem {
   standalone: true,
   imports: [CommonModule, RouterOutlet, RouterLink, RouterLinkActive],
   template: `
-    <div class="min-h-screen bg-background-DEFAULT flex">
+    <div class="min-h-screen bg-base-100 flex">
       <!-- Sidebar -->
-      <aside class="w-64 bg-background-secondary border-r border-gray-700 flex flex-col">
+      <aside class="w-64 bg-base-200 border-r border-neutral flex flex-col">
         <!-- Logo -->
-        <div class="p-6 border-b border-gray-700">
+        <div class="p-6 border-b border-neutral">
           <h1 class="text-2xl font-bold text-primary">Wheelbase</h1>
-          <p class="text-text-muted text-sm mt-1">Business Portal</p>
+          <p class="text-secondary text-sm mt-1">Business Portal</p>
         </div>
 
         <!-- Business Info -->
-        <div class="p-4 border-b border-gray-700">
+        <div class="p-4 border-b border-neutral">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-full bg-background-tertiary flex items-center justify-center">
+            <div class="avatar placeholder">
               @if (authService.business()?.logoUrl) {
-                <img
-                  [src]="authService.business()?.logoUrl"
-                  alt="Business logo"
-                  class="w-10 h-10 rounded-full object-cover"
-                />
+                <div class="w-10 rounded-full">
+                  <img
+                    [src]="authService.business()?.logoUrl"
+                    alt="Business logo"
+                  />
+                </div>
               } @else {
-                <i class="pi pi-building text-text-muted"></i>
+                <div class="bg-base-300 w-10 rounded-full">
+                  <span><i class="pi pi-building text-secondary"></i></span>
+                </div>
               }
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-text-primary font-medium truncate">
+              <p class="font-medium truncate">
                 {{ authService.business()?.businessName }}
               </p>
-              <span
-                class="text-xs px-2 py-0.5 rounded-full"
-                [ngClass]="getStatusClass()"
-              >
+              <span [ngClass]="getStatusClass()">
                 {{ getStatusLabel() }}
               </span>
             </div>
@@ -55,14 +54,14 @@ interface NavItem {
 
         <!-- Navigation -->
         <nav class="flex-1 p-4">
-          <ul class="space-y-2">
+          <ul class="menu menu-compact">
             @for (item of navItems; track item.route) {
               @if (!item.requiresApproval || authService.isApproved()) {
                 <li>
                   <a
                     [routerLink]="item.route"
-                    routerLinkActive="bg-primary/10 text-primary border-l-2 border-primary"
-                    class="flex items-center gap-3 px-4 py-2.5 rounded-lg text-text-secondary hover:bg-background-tertiary hover:text-text-primary transition-colors"
+                    routerLinkActive="active"
+                    class="flex items-center gap-3"
                   >
                     <i [class]="'pi ' + item.icon"></i>
                     <span>{{ item.label }}</span>
@@ -74,10 +73,10 @@ interface NavItem {
         </nav>
 
         <!-- Bottom Actions -->
-        <div class="p-4 border-t border-gray-700">
+        <div class="p-4 border-t border-neutral">
           <button
             (click)="logout()"
-            class="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-text-secondary hover:bg-background-tertiary hover:text-text-primary transition-colors"
+            class="btn btn-ghost w-full justify-start gap-3"
           >
             <i class="pi pi-sign-out"></i>
             <span>Sign Out</span>
@@ -88,15 +87,15 @@ interface NavItem {
       <!-- Main Content -->
       <main class="flex-1 flex flex-col">
         <!-- Top Bar -->
-        <header class="h-16 bg-background-secondary border-b border-gray-700 flex items-center justify-between px-6">
-          <div>
+        <header class="navbar bg-base-200 border-b border-neutral px-6">
+          <div class="flex-1">
             <!-- Breadcrumb or page title can go here -->
           </div>
-          <div class="flex items-center gap-4">
-            <button class="p-2 rounded-lg hover:bg-background-tertiary text-text-secondary">
+          <div class="flex-none gap-2">
+            <button class="btn btn-ghost btn-circle">
               <i class="pi pi-bell"></i>
             </button>
-            <button class="p-2 rounded-lg hover:bg-background-tertiary text-text-secondary">
+            <button class="btn btn-ghost btn-circle">
               <i class="pi pi-cog"></i>
             </button>
           </div>
@@ -127,21 +126,34 @@ export class MainLayoutComponent {
     const status = this.authService.verificationStatus();
     switch (status) {
       case 'pending':
-        return 'bg-yellow-500/20 text-yellow-400';
+        return 'badge badge-warning badge-sm';
       case 'approved':
-        return 'bg-green-500/20 text-green-400';
+      case 'verified':
+        return 'badge badge-success badge-sm';
       case 'rejected':
-        return 'bg-red-500/20 text-red-400';
+        return 'badge badge-error badge-sm';
       case 'suspended':
-        return 'bg-gray-500/20 text-gray-400';
+        return 'badge badge-neutral badge-sm';
       default:
-        return 'bg-gray-500/20 text-gray-400';
+        return 'badge badge-neutral badge-sm';
     }
   }
 
   getStatusLabel(): string {
     const status = this.authService.verificationStatus();
-    return status ? VERIFICATION_STATUS_LABELS[status] : 'Unknown';
+    switch (status) {
+      case 'pending':
+        return 'Pending Approval';
+      case 'approved':
+      case 'verified':
+        return 'Verified';
+      case 'rejected':
+        return 'Rejected';
+      case 'suspended':
+        return 'Suspended';
+      default:
+        return 'Unknown';
+    }
   }
 
   async logout(): Promise<void> {

@@ -3,9 +3,7 @@ import { AuthGuard, GuestGuard, NeedsBusinessGuard } from './core/auth/auth.guar
 import { AuthLayoutComponent } from './layout/auth-layout/auth-layout.component';
 import { MainLayoutComponent } from './layout/main-layout/main-layout.component';
 import { LoginComponent } from './features/auth/login/login.component';
-import { RegisterComponent } from './features/auth/register/register.component';
 import { CallbackComponent } from './features/auth/callback/callback.component';
-import { ClaimComponent } from './features/auth/claim/claim.component';
 import { DashboardComponent } from './features/dashboard/dashboard.component';
 
 export const routes: Routes = [
@@ -31,15 +29,24 @@ export const routes: Routes = [
       {
         path: 'login',
         component: LoginComponent
-      },
-      {
-        path: 'register',
-        component: RegisterComponent
       }
     ]
   },
 
-  // Claim route (logged in but no business)
+  // Claim provider route (logged in, with provider ID parameter)
+  {
+    path: 'claim/:providerId',
+    component: AuthLayoutComponent,
+    canActivate: [NeedsBusinessGuard],
+    children: [
+      {
+        path: '',
+        loadComponent: () => import('./features/claim/claim-provider.component').then(m => m.ClaimProviderComponent)
+      }
+    ]
+  },
+
+  // Claim route without provider ID (shows search/instructions)
   {
     path: 'claim',
     component: AuthLayoutComponent,
@@ -47,7 +54,7 @@ export const routes: Routes = [
     children: [
       {
         path: '',
-        component: ClaimComponent
+        loadComponent: () => import('./features/claim/claim-provider.component').then(m => m.ClaimProviderComponent)
       }
     ]
   },
