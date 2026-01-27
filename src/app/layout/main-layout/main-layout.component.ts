@@ -1,6 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
+import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 
 interface NavItem {
@@ -36,14 +36,14 @@ interface NavItem {
                   />
                 </div>
               } @else {
-                <div class="bg-base-300 w-10 rounded-full">
-                  <span><i class="pi pi-building text-secondary"></i></span>
+                <div class="bg-base-300 w-10 rounded-full flex items-center justify-center">
+                  <i class="pi pi-building text-secondary"></i>
                 </div>
               }
             </div>
             <div class="flex-1 min-w-0">
               <p class="font-medium truncate">
-                {{ authService.business()?.businessName }}
+                {{ getBusinessName() }}
               </p>
               <span [ngClass]="getStatusClass()">
                 {{ getStatusLabel() }}
@@ -54,14 +54,16 @@ interface NavItem {
 
         <!-- Navigation -->
         <nav class="flex-1 p-4">
-          <ul class="menu menu-compact">
+          <ul class="menu bg-base-200 rounded-box w-full">
             @for (item of navItems; track item.route) {
               @if (!item.requiresApproval || authService.isApproved()) {
                 <li>
                   <a
                     [routerLink]="item.route"
                     routerLinkActive="active"
+                    [routerLinkActiveOptions]="{ exact: item.route === '/dashboard' }"
                     class="flex items-center gap-3"
+                    (click)="navigateTo(item.route)"
                   >
                     <i [class]="'pi ' + item.icon"></i>
                     <span>{{ item.label }}</span>
@@ -112,15 +114,23 @@ interface NavItem {
 })
 export class MainLayoutComponent {
   authService = inject(AuthService);
+  private router = inject(Router);
 
   navItems: NavItem[] = [
     { label: 'Dashboard', icon: 'pi-home', route: '/dashboard' },
+    { label: 'Orders', icon: 'pi-shopping-cart', route: '/orders', requiresApproval: true },
     { label: 'Products', icon: 'pi-box', route: '/products', requiresApproval: true },
     { label: 'Services', icon: 'pi-wrench', route: '/services', requiresApproval: true },
     { label: 'Appointments', icon: 'pi-calendar', route: '/appointments', requiresApproval: true },
     { label: 'Analytics', icon: 'pi-chart-bar', route: '/analytics', requiresApproval: true },
     { label: 'Settings', icon: 'pi-cog', route: '/settings' },
   ];
+
+  getBusinessName(): string {
+    return this.authService.business()?.businessName ||
+           this.authService.claimedProvider()?.businessName ||
+           'My Business';
+  }
 
   getStatusClass(): string {
     const status = this.authService.verificationStatus();
@@ -158,5 +168,10 @@ export class MainLayoutComponent {
 
   async logout(): Promise<void> {
     await this.authService.logout();
+  }
+
+  navigateTo(route: string): void {
+    console.log('Navigating to:', route);
+    this.router.navigate([route]);
   }
 }

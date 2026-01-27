@@ -14,6 +14,7 @@ import {
   PROVIDER_CATEGORIES,
   CreateProviderRequest,
 } from '../../core/models/claim.model';
+import { LocationPickerComponent } from '../../shared/components/location-picker/location-picker.component';
 
 type ClaimStep = 'search' | 'confirmation' | 'details' | 'documents' | 'review' | 'success';
 type ClaimMode = 'search' | 'claim-existing' | 'add-new';
@@ -28,9 +29,9 @@ interface UploadedDocument {
 @Component({
   selector: 'app-claim-provider',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, LocationPickerComponent],
   template: `
-    <div class="max-w-2xl mx-auto">
+    <div class="max-w-3xl mx-auto w-full">
       <!-- Has Existing Claim -->
       @if (claimService.hasExistingClaim() && !isOwnProvider()) {
         <div class="card bg-base-200 border border-neutral">
@@ -112,17 +113,29 @@ interface UploadedDocument {
 
       <!-- Main Claim Flow -->
       @else {
-        <div class="card bg-base-200 border border-neutral">
+        <div class="card">
           <div class="card-body">
-            <!-- Progress Steps -->
-            <ul class="steps steps-horizontal w-full mb-6">
-              <li class="step" [class.step-primary]="stepIndex() >= 0">Find</li>
-              <li class="step" [class.step-primary]="stepIndex() >= 1">Confirm</li>
-              <li class="step" [class.step-primary]="stepIndex() >= 2">Details</li>
-              <li class="step" [class.step-primary]="stepIndex() >= 3">Documents</li>
-              <li class="step" [class.step-primary]="stepIndex() >= 4">Review</li>
-              <li class="step" [class.step-primary]="stepIndex() >= 5">Done</li>
-            </ul>
+            <!-- Header with Sign Out -->
+            <div class="flex justify-end mb-4">
+              <button (click)="signOut()" class="btn btn-ghost btn-sm text-secondary hover:text-white">
+                <i class="pi pi-sign-out mr-1"></i>
+                Sign Out & Re-login
+              </button>
+            </div>
+
+            <!-- Progress Steps - Bar Style -->
+            <div class="grid grid-cols-6 gap-4 mb-8">
+              @for (step of stepLabels; track step.key; let i = $index) {
+                <div class="flex flex-col items-start">
+                  <div class="w-full h-1 rounded-full mb-2"
+                       [class]="stepIndex() >= i ? 'bg-white' : 'bg-neutral'"></div>
+                  <span class="text-sm font-medium"
+                        [class]="stepIndex() >= i ? 'text-white' : 'text-neutral'">
+                    {{ step.label }}
+                  </span>
+                </div>
+              }
+            </div>
 
             <!-- Error Alert -->
             @if (claimService.error()) {
@@ -341,40 +354,18 @@ interface UploadedDocument {
                     </div>
                   </div>
 
-                  <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                      <label class="label" for="newLat">
-                        <span class="label-text">Latitude *</span>
-                      </label>
-                      <input
-                        type="number"
-                        id="newLat"
-                        [(ngModel)]="newLat"
-                        class="input input-bordered w-full bg-base-300"
-                        placeholder="14.5995"
-                        step="0.0001"
-                        required
-                      />
-                    </div>
-                    <div class="form-control">
-                      <label class="label" for="newLng">
-                        <span class="label-text">Longitude *</span>
-                      </label>
-                      <input
-                        type="number"
-                        id="newLng"
-                        [(ngModel)]="newLng"
-                        class="input input-bordered w-full bg-base-300"
-                        placeholder="120.9842"
-                        step="0.0001"
-                        required
-                      />
-                    </div>
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text">Business Location *</span>
+                    </label>
+                    <p class="text-xs text-secondary mb-2">
+                      Click on the map to pin your business location
+                    </p>
+                    <app-location-picker
+                      [initialLocation]="newLat && newLng ? { lat: newLat, lng: newLng } : undefined"
+                      (locationSelected)="onLocationSelected($event)"
+                    />
                   </div>
-                  <p class="text-xs text-secondary">
-                    Tip: Find your coordinates on <a href="https://www.google.com/maps" target="_blank" class="link link-primary">Google Maps</a>
-                    - right-click your location and copy the coordinates.
-                  </p>
                 </div>
 
                 <div class="flex gap-4 justify-between mt-6">
@@ -821,6 +812,16 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
     return steps.indexOf(this.currentStep());
   });
 
+  // Step labels for the bar stepper
+  stepLabels = [
+    { key: 'search', label: 'Find' },
+    { key: 'confirmation', label: 'Confirm' },
+    { key: 'details', label: 'Details' },
+    { key: 'documents', label: 'Documents' },
+    { key: 'review', label: 'Review' },
+    { key: 'success', label: 'Done' },
+  ];
+
   // Search state
   searchQuery = '';
   hasSearched = signal(false);
@@ -947,6 +948,17 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
     this.router.navigate(['/claim']);
   }
 
+  async signOut(): Promise<void> {
+    try {
+      await this.authService.logout();
+      // logout() handles navigation to /login
+    } catch (error) {
+      console.error('Sign out error:', error);
+      // Still navigate to login even on error
+      this.router.navigate(['/auth/login']);
+    }
+  }
+
   nextStep(): void {
     const steps: ClaimStep[] = ['search', 'confirmation', 'details', 'documents', 'review', 'success'];
     const currentIndex = steps.indexOf(this.currentStep());
@@ -979,6 +991,11 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
       this.newLat >= -90 && this.newLat <= 90 &&
       this.newLng >= -180 && this.newLng <= 180
     );
+  }
+
+  onLocationSelected(location: { lat: number; lng: number }): void {
+    this.newLat = location.lat;
+    this.newLng = location.lng;
   }
 
   isDetailsValid(): boolean {
@@ -1123,10 +1140,6 @@ export class ClaimProviderComponent implements OnInit, OnDestroy {
     } finally {
       this.isSubmitting.set(false);
     }
-  }
-
-  async signOut(): Promise<void> {
-    await this.authService.logout();
   }
 
   goToDashboard(): void {

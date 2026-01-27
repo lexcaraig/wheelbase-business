@@ -1,6 +1,6 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 import {
   BUSINESS_TYPE_LABELS,
@@ -12,7 +12,7 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, RouterLink],
   template: `
     <div class="space-y-6">
       <div class="flex items-center justify-between">
@@ -190,7 +190,7 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
                       <p class="text-secondary text-sm mb-3">
                         Add photos, operating hours, and services to attract more customers.
                       </p>
-                      <a href="/settings" class="link link-primary text-sm">
+                      <a routerLink="/settings" class="link link-primary text-sm">
                         Edit Profile &rarr;
                       </a>
                     </div>
@@ -216,7 +216,7 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
                       <p class="text-secondary text-sm mb-3">
                         Track profile views, contacts, and customer engagement.
                       </p>
-                      <a href="/analytics" class="link link-primary text-sm">
+                      <a routerLink="/analytics" class="link link-primary text-sm">
                         View Analytics &rarr;
                       </a>
                     </div>
@@ -425,7 +425,7 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
                     <p class="text-secondary text-sm mb-3">
                       List your motorcycle parts, accessories, and gear for the community to discover.
                     </p>
-                    <a href="/products" class="link link-primary text-sm">
+                    <a routerLink="/products" class="link link-primary text-sm">
                       Add Products &rarr;
                     </a>
                   </div>
@@ -439,7 +439,7 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
                     <p class="text-secondary text-sm mb-3">
                       Showcase your repair, maintenance, and customization services.
                     </p>
-                    <a href="/services" class="link link-primary text-sm">
+                    <a routerLink="/services" class="link link-primary text-sm">
                       Add Services &rarr;
                     </a>
                   </div>
@@ -453,7 +453,7 @@ import { CLAIM_STATUS_LABELS } from '../../core/models/claim.model';
                     <p class="text-secondary text-sm mb-3">
                       Add your logo, cover image, and operating hours to attract more customers.
                     </p>
-                    <a href="/settings" class="link link-primary text-sm">
+                    <a routerLink="/settings" class="link link-primary text-sm">
                       Edit Settings &rarr;
                     </a>
                   </div>

@@ -64,80 +64,8 @@ a:hover {
   text-decoration: underline;
 }
 
-/* Custom Utility Classes */
-.btn-primary {
-  background-color: var(--primary-color);
-  color: var(--background-primary);
-  font-weight: 600;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  border: none;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.btn-primary:hover {
-  background-color: #E6BF00;
-}
-
-.btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.btn-secondary {
-  background-color: var(--background-secondary);
-  color: var(--text-primary);
-  border: 1px solid #4B5563;
-  font-weight: 600;
-  padding: 0.5rem 1rem;
-  border-radius: 0.5rem;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.btn-secondary:hover {
-  background-color: var(--background-tertiary);
-}
-
-.btn-secondary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.card {
-  background-color: var(--background-secondary);
-  border-radius: 0.5rem;
-  border: 1px solid #374151;
-  padding: 1.5rem;
-}
-
-.input-field {
-  width: 100%;
-  background-color: var(--background-tertiary);
-  color: var(--text-primary);
-  border: 1px solid #4B5563;
-  border-radius: 0.5rem;
-  padding: 0.75rem 1rem;
-  transition: border-color 0.2s;
-}
-
-.input-field:focus {
-  outline: none;
-  border-color: var(--primary-color);
-}
-
-.input-field::placeholder {
-  color: var(--text-muted);
-}
-
-.input-field:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-/* Select styling */
-select.input-field {
+/* Select styling enhancement */
+select.input {
   appearance: none;
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236B7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
   background-position: right 0.5rem center;
@@ -146,39 +74,14 @@ select.input-field {
   padding-right: 2.5rem;
 }
 
-/* Status Badges */
-.badge-pending {
-  background-color: rgba(234, 179, 8, 0.2);
-  color: #FACC15;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
+/* Legacy class mapping - for backwards compatibility during migration */
+/* These classes map to similar DaisyUI styles but use standard CSS */
+/* They can be removed once all components are updated to use DaisyUI classes directly */
 
-.badge-approved {
-  background-color: rgba(34, 197, 94, 0.2);
-  color: #4ADE80;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.badge-rejected {
-  background-color: rgba(239, 68, 68, 0.2);
-  color: #F87171;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.badge-suspended {
-  background-color: rgba(107, 114, 128, 0.2);
-  color: #9CA3AF;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
+/* Note: Components should use DaisyUI classes directly:
+   - Use "btn btn-primary" instead of "btn-primary"
+   - Use "btn btn-ghost" instead of "btn-secondary"
+   - Use "card bg-base-200" instead of "card"
+   - Use "input input-bordered w-full" instead of "input-field"
+   - Use "badge badge-warning" instead of "badge-pending"
+*/

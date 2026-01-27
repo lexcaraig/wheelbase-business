@@ -69,26 +69,31 @@ export const routes: Routes = [
         path: 'dashboard',
         component: DashboardComponent
       },
-      // Phase 2 routes (placeholders)
+      // Orders management
+      {
+        path: 'orders',
+        loadComponent: () => import('./features/orders/order-list.component').then(m => m.OrderListComponent)
+      },
+      // Products management
       {
         path: 'products',
-        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+        loadComponent: () => import('./features/products/product-list.component').then(m => m.ProductListComponent)
       },
       {
         path: 'services',
-        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+        loadComponent: () => import('./features/services/service-list.component').then(m => m.ServiceListComponent)
       },
       {
         path: 'appointments',
-        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+        loadComponent: () => import('./features/appointments/appointment-list.component').then(m => m.AppointmentListComponent)
       },
       {
         path: 'analytics',
-        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+        loadComponent: () => import('./features/analytics/analytics-dashboard.component').then(m => m.AnalyticsDashboardComponent)
       },
       {
         path: 'settings',
-        loadComponent: () => import('./features/dashboard/dashboard.component').then(m => m.DashboardComponent)
+        loadComponent: () => import('./features/settings/settings.component').then(m => m.SettingsComponent)
       }
     ]
   },
