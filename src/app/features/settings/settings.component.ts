@@ -181,6 +181,80 @@ interface DayHours {
             </div>
           </div>
 
+          <!-- Cover Image Upload Card -->
+          <div class="card bg-base-200 border border-neutral mb-6">
+            <div class="card-body">
+              <h2 class="card-title mb-4">
+                Cover Image
+                <span class="badge badge-success badge-sm ml-2">Verified Business</span>
+              </h2>
+              <p class="text-secondary text-sm mb-4">
+                Upload a cover image for your business profile. This appears at the top of your detail page.
+                Recommended: Wide image (16:9 ratio), max 2MB.
+              </p>
+              <div class="flex flex-col gap-4">
+                <!-- Cover Preview -->
+                <div class="w-full">
+                  @if (profile.coverImageUrl) {
+                    <div class="relative group">
+                      <img
+                        [src]="profile.coverImageUrl"
+                        alt="Business Cover"
+                        class="w-full h-48 rounded-lg object-cover border-2 border-neutral"
+                      />
+                      <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 rounded-lg flex items-center justify-center transition-opacity">
+                        <button
+                          type="button"
+                          (click)="removeCover()"
+                          class="btn btn-sm btn-error"
+                          [disabled]="isUploadingCover()"
+                        >
+                          <i class="pi pi-trash mr-2"></i>
+                          Remove Cover
+                        </button>
+                      </div>
+                    </div>
+                  } @else {
+                    <div class="w-full h-48 rounded-lg border-2 border-dashed border-neutral flex items-center justify-center bg-base-300">
+                      <div class="text-center">
+                        <i class="pi pi-image text-4xl text-secondary mb-2"></i>
+                        <p class="text-secondary text-sm">No cover image</p>
+                      </div>
+                    </div>
+                  }
+                </div>
+
+                <!-- Upload Controls -->
+                <div>
+                  <input
+                    type="file"
+                    #coverInput
+                    (change)="onCoverSelected($event)"
+                    accept="image/jpeg,image/png,image/webp"
+                    class="hidden"
+                  />
+                  <button
+                    type="button"
+                    (click)="coverInput.click()"
+                    class="btn btn-primary btn-outline"
+                    [disabled]="isUploadingCover()"
+                  >
+                    @if (isUploadingCover()) {
+                      <span class="loading loading-spinner loading-sm"></span>
+                      Uploading...
+                    } @else {
+                      <i class="pi pi-upload mr-2"></i>
+                      {{ profile.coverImageUrl ? 'Change Cover' : 'Upload Cover' }}
+                    }
+                  </button>
+                  <p class="text-xs text-secondary mt-2">
+                    Supports: JPG, PNG, WebP. Max size: 2MB. Recommended: 1920x1080 or similar 16:9 ratio.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="card bg-base-200 border border-neutral">
             <div class="card-body">
               <h2 class="card-title mb-4">Business Information</h2>
@@ -763,6 +837,7 @@ export class SettingsComponent implements OnInit {
   isLoading = signal(false);
   isSaving = signal(false);
   isUploadingLogo = signal(false);
+  isUploadingCover = signal(false);
   isSavingPayment = signal(false);
   error = signal<string | null>(null);
   success = signal<string | null>(null);
@@ -1035,6 +1110,74 @@ export class SettingsComponent implements OnInit {
       this.error.set(err instanceof Error ? err.message : 'Failed to remove logo');
     } finally {
       this.isUploadingLogo.set(false);
+    }
+  }
+
+  async onCoverSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    // Validate file size (2MB max)
+    const maxSize = 2 * 1024 * 1024;
+    if (file.size > maxSize) {
+      this.error.set('Cover image must be under 2MB');
+      return;
+    }
+
+    // Validate file type
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      this.error.set('Cover image must be JPG, PNG, or WebP');
+      return;
+    }
+
+    try {
+      this.isUploadingCover.set(true);
+      this.error.set(null);
+
+      // Upload to R2
+      const result = await this.supabase.uploadImageToR2(file, 'service-providers', 'cover.jpg');
+
+      // Update profile with new cover URL
+      await this.supabase.callFunctionWithAuth(
+        'manage-business-profile',
+        {
+          action: 'update',
+          coverImageUrl: result.url,
+        }
+      );
+
+      this.profile.coverImageUrl = result.url;
+      this.success.set('Cover image uploaded successfully');
+    } catch (err) {
+      this.error.set(err instanceof Error ? err.message : 'Failed to upload cover image');
+    } finally {
+      this.isUploadingCover.set(false);
+      // Reset input
+      input.value = '';
+    }
+  }
+
+  async removeCover(): Promise<void> {
+    try {
+      this.isUploadingCover.set(true);
+      this.error.set(null);
+
+      await this.supabase.callFunctionWithAuth(
+        'manage-business-profile',
+        {
+          action: 'update',
+          coverImageUrl: null,
+        }
+      );
+
+      this.profile.coverImageUrl = undefined;
+      this.success.set('Cover image removed');
+    } catch (err) {
+      this.error.set(err instanceof Error ? err.message : 'Failed to remove cover image');
+    } finally {
+      this.isUploadingCover.set(false);
     }
   }
 
