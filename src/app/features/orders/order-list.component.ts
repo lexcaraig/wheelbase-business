@@ -213,7 +213,7 @@ interface Tab {
                     <!-- Status -->
                     <td>
                       <span
-                        class="badge gap-1"
+                        class="badge gap-1 whitespace-nowrap"
                         [style.background-color]="getStatusConfig(order.status).bgColor"
                         [style.color]="getStatusConfig(order.status).color"
                         [style.border-color]="getStatusConfig(order.status).color"
@@ -652,9 +652,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     {
       id: 'active',
       label: 'Active',
-      statuses: ['pending_payment', 'payment_uploaded', 'payment_verified', 'processing', 'shipped', 'delivered']
+      statuses: ['pending_payment', 'payment_uploaded', 'payment_verified', 'processing', 'shipped']
     },
-    { id: 'completed', label: 'Completed', statuses: ['completed'] },
+    { id: 'completed', label: 'Completed', statuses: ['delivered', 'completed'] },
     { id: 'cancelled', label: 'Cancelled', statuses: ['cancelled', 'refunded'] },
     { id: 'all', label: 'All', statuses: [] },
   ];
