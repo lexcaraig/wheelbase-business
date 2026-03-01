@@ -180,12 +180,22 @@ export class AuthService {
    * Refresh both business profile and claim status
    */
   private async refreshAllStatus(): Promise<void> {
-    // Try to fetch business profile (legacy)
-    await this.refreshProfile();
-
-    // If no business, check for claimed provider
-    if (!this.businessSignal()) {
+    // If we already know this is a claim flow user, skip the business-profile call
+    const storedClaim = this.loadClaimFromStorage();
+    if (storedClaim) {
       await this.refreshClaimStatus();
+      // Only try business profile if claim refresh failed
+      if (!this.claimedProviderSignal()) {
+        await this.refreshProfile();
+      }
+    } else {
+      // Try to fetch business profile (legacy)
+      await this.refreshProfile();
+
+      // If no business, check for claimed provider
+      if (!this.businessSignal()) {
+        await this.refreshClaimStatus();
+      }
     }
   }
 
