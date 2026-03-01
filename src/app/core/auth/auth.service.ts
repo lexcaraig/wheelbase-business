@@ -180,20 +180,19 @@ export class AuthService {
    * Refresh both business profile and claim status
    */
   private async refreshAllStatus(): Promise<void> {
-    // If we already know this is a claim flow user, skip the business-profile call
-    const storedClaim = this.loadClaimFromStorage();
-    if (storedClaim) {
+    // Check both signal (set from storage in initializeAuth) and storage directly
+    if (this.claimedProviderSignal() || this.loadClaimFromStorage()) {
+      // Known claim flow user — refresh claim first, skip noisy business-profile call
       await this.refreshClaimStatus();
-      // Only try business profile if claim refresh failed
       if (!this.claimedProviderSignal()) {
+        // Claim no longer valid, fall back to business profile
         await this.refreshProfile();
       }
     } else {
-      // Try to fetch business profile (legacy)
+      // Try business profile first (legacy flow)
       await this.refreshProfile();
-
-      // If no business, check for claimed provider
       if (!this.businessSignal()) {
+        // No business account — check for claimed provider
         await this.refreshClaimStatus();
       }
     }
@@ -238,17 +237,30 @@ export class AuthService {
    */
   async refreshProfile(): Promise<Business | null> {
     try {
-      const business = await this.supabase.callFunctionWithAuth<Business>(
-        'business-profile'
-      );
+      const token = await this.supabase.getAccessToken();
+      if (!token) {
+        this.businessSignal.set(null);
+        return null;
+      }
 
+      const { data, error } = await this.supabase.client.functions.invoke('business-profile', {
+        body: {},
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (error || !data?.success) {
+        // Expected for claim flow users — no business account
+        this.businessSignal.set(null);
+        return null;
+      }
+
+      const business = data.data as Business;
       this.businessSignal.set(business);
       this.saveBusinessToStorage(business);
 
       return business;
     } catch (error) {
       // Expected error if user doesn't have a business account
-      console.log('No business account found (expected for claim flow users)');
       this.businessSignal.set(null);
       return null;
     }
