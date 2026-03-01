@@ -749,6 +749,13 @@ export class OrderListComponent implements OnInit, OnDestroy {
   async verifyPayment(order: Order): Promise<void> {
     this.verifyingId.set(order.id);
     await this.orderService.verifyPayment(order.id);
+    try {
+      await this.firebaseService.sendStatusUpdateMessage(
+        order.chatId, 'payment_uploaded', 'payment_verified'
+      );
+    } catch (e) {
+      console.error('[Orders] Failed to send chat status update:', e);
+    }
     this.verifyingId.set(null);
   }
 
@@ -758,6 +765,13 @@ export class OrderListComponent implements OnInit, OnDestroy {
       orderId: order.id,
       status: 'processing'
     });
+    try {
+      await this.firebaseService.sendStatusUpdateMessage(
+        order.chatId, 'payment_verified', 'processing'
+      );
+    } catch (e) {
+      console.error('[Orders] Failed to send chat status update:', e);
+    }
     this.processingId.set(null);
   }
 
@@ -767,6 +781,13 @@ export class OrderListComponent implements OnInit, OnDestroy {
       orderId: order.id,
       status: 'delivered'
     });
+    try {
+      await this.firebaseService.sendStatusUpdateMessage(
+        order.chatId, 'shipped', 'delivered'
+      );
+    } catch (e) {
+      console.error('[Orders] Failed to send chat status update:', e);
+    }
     this.deliveringId.set(null);
   }
 
@@ -784,11 +805,22 @@ export class OrderListComponent implements OnInit, OnDestroy {
     const order = this.shippingOrder();
     if (!order) return;
 
+    const chatId = order.chatId;
+    const tracking = this.trackingNumber || undefined;
+
     await this.orderService.updateOrderStatus({
       orderId: order.id,
       status: 'shipped',
-      trackingNumber: this.trackingNumber || undefined,
+      trackingNumber: tracking,
     });
+
+    try {
+      await this.firebaseService.sendStatusUpdateMessage(
+        chatId, 'processing', 'shipped', tracking
+      );
+    } catch (e) {
+      console.error('[Orders] Failed to send chat status update:', e);
+    }
 
     this.shippingOrder.set(null);
     this.trackingNumber = '';
@@ -848,8 +880,19 @@ export class OrderListComponent implements OnInit, OnDestroy {
     const order = this.cancellingOrder();
     if (!order) return;
 
-    const result = await this.orderService.cancelOrder(order.id, this.cancelReason || undefined);
+    const chatId = order.chatId;
+    const previousStatus = order.status;
+    const reason = this.cancelReason || undefined;
+
+    const result = await this.orderService.cancelOrder(order.id, reason);
     if (result) {
+      try {
+        await this.firebaseService.sendStatusUpdateMessage(
+          chatId, previousStatus, 'cancelled', undefined, reason
+        );
+      } catch (e) {
+        console.error('[Orders] Failed to send chat status update:', e);
+      }
       this.closeCancelModal();
     }
   }
