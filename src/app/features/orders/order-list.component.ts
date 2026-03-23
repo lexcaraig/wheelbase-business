@@ -13,6 +13,7 @@ import {
 } from '../../core/models/order.model';
 import { ChatPanelComponent } from '../../shared/components/chat-panel/chat-panel.component';
 import { FirebaseService } from '../../core/services/firebase.service';
+import { AuthService } from '../../core/auth/auth.service';
 
 type TabFilter = 'active' | 'completed' | 'cancelled' | 'all';
 
@@ -311,10 +312,13 @@ interface Tab {
                         }
                         <button
                           (click)="openChat(order)"
-                          class="btn btn-ghost btn-sm btn-square"
+                          class="btn btn-ghost btn-sm btn-square relative"
                           title="Open Chat"
                         >
                           <i class="pi pi-comments"></i>
+                          @if (hasUnread(order)) {
+                            <span class="absolute -top-1 -right-1 w-3 h-3 bg-error rounded-full border-2 border-base-200"></span>
+                          }
                         </button>
                         @if (canCancelOrder(order)) {
                           <button
@@ -640,6 +644,7 @@ interface Tab {
 export class OrderListComponent implements OnInit, OnDestroy {
   orderService = inject(OrderService);
   firebaseService = inject(FirebaseService);
+  private authService = inject(AuthService);
 
   // Chat panel state
   chatOrder = signal<Order | null>(null);
@@ -683,6 +688,18 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.loadOrders();
+    // Subscribe to unread status for all order chats
+    this.subscribeToUnread();
+  }
+
+  private subscribeToUnread(): void {
+    const orders = this.orderService.orders();
+    const chatIds = orders.map(o => o.chatId).filter(Boolean);
+    const unified = this.authService?.unifiedBusiness();
+    const businessId = unified?.id || '';
+    if (chatIds.length > 0 && businessId) {
+      this.firebaseService.subscribeToUnreadStatus(chatIds, businessId);
+    }
   }
 
   ngOnDestroy(): void {
@@ -691,6 +708,11 @@ export class OrderListComponent implements OnInit, OnDestroy {
 
   async loadOrders(): Promise<void> {
     await this.orderService.loadOrders({ limit: 100 });
+    this.subscribeToUnread();
+  }
+
+  hasUnread(order: Order): boolean {
+    return this.firebaseService.unreadChatIds().has(order.chatId);
   }
 
   selectTab(tab: TabFilter): void {
@@ -848,6 +870,9 @@ export class OrderListComponent implements OnInit, OnDestroy {
     this.chatCustomerName.set(order.customerName || 'Customer');
     this.chatCustomerAvatar.set(order.customerAvatarUrl || null);
     this.chatOrderNumber.set(order.orderNumber);
+
+    // Mark chat as read
+    this.firebaseService.markChatAsRead(order.chatId);
 
     // Close the detail modal if open
     this.selectedOrderForDetail.set(null);

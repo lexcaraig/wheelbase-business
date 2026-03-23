@@ -97,11 +97,14 @@ export class FirebaseService implements OnDestroy {
   private loadingSignal = signal<boolean>(false);
   private errorSignal = signal<string | null>(null);
   private firebaseAuthenticatedSignal = signal<boolean>(false);
+  private unreadChatIdsSignal = signal<Set<string>>(new Set());
+  private metadataListeners: Map<string, Unsubscribe> = new Map();
 
   readonly messages = computed(() => this.messagesSignal());
   readonly isLoading = computed(() => this.loadingSignal());
   readonly error = computed(() => this.errorSignal());
   readonly isFirebaseAuthenticated = computed(() => this.firebaseAuthenticatedSignal());
+  readonly unreadChatIds = computed(() => this.unreadChatIdsSignal());
 
   constructor(
     private authService: AuthService,
@@ -199,6 +202,15 @@ export class FirebaseService implements OnDestroy {
       unsubscribe();
     });
     this.messageListeners.clear();
+    this.metadataListeners.forEach((unsub) => unsub());
+    this.metadataListeners.clear();
+  }
+
+  /**
+   * Clear the error state (for retry UI)
+   */
+  clearError(): void {
+    this.errorSignal.set(null);
   }
 
   /**
@@ -331,8 +343,8 @@ export class FirebaseService implements OnDestroy {
 
       await set(newMessageRef, messageData);
 
-      // Update chat metadata
-      await this.updateChatMetadata(chatId, content);
+      // Update chat metadata with senderId for unread tracking
+      await this.updateChatMetadata(chatId, content, unified.id);
 
       console.log(`[FirebaseService] Sent message to ${chatId} as ${unified.type}`);
     } catch (error) {
@@ -416,7 +428,7 @@ export class FirebaseService implements OnDestroy {
       };
 
       await set(newMessageRef, messageData);
-      await this.updateChatMetadata(chatId, content);
+      await this.updateChatMetadata(chatId, content, unified.id);
 
       console.log(`[FirebaseService] Sent status update to ${chatId} as ${unified.type}`);
     } catch (error) {
@@ -428,12 +440,86 @@ export class FirebaseService implements OnDestroy {
   /**
    * Update chat metadata
    */
-  private async updateChatMetadata(chatId: string, lastMessage: string): Promise<void> {
+  private async updateChatMetadata(chatId: string, lastMessage: string, senderId?: string): Promise<void> {
     const metadataRef = ref(this.db, `chats/${chatId}/metadata`);
-    await update(metadataRef, {
+    const updates: Record<string, unknown> = {
       lastMessage,
       lastMessageTimestamp: serverTimestamp(),
-    });
+    };
+    if (senderId) {
+      updates['lastSenderId'] = senderId;
+    }
+    await update(metadataRef, updates);
+  }
+
+  /**
+   * Mark a chat as read by the business.
+   * Sets businessLastReadAt in metadata so we can detect unread messages.
+   */
+  async markChatAsRead(chatId: string): Promise<void> {
+    try {
+      await this.authenticateWithFirebase();
+      const metadataRef = ref(this.db, `chats/${chatId}/metadata`);
+      await update(metadataRef, {
+        businessLastReadAt: serverTimestamp(),
+      });
+      // Remove from unread set immediately for responsive UI
+      this.unreadChatIdsSignal.update((set) => {
+        const next = new Set(set);
+        next.delete(chatId);
+        return next;
+      });
+    } catch (error) {
+      console.error(`[FirebaseService] Error marking chat as read:`, error);
+    }
+  }
+
+  /**
+   * Subscribe to chat metadata for multiple chats to detect unread messages.
+   * Compares lastMessageTimestamp vs businessLastReadAt.
+   */
+  async subscribeToUnreadStatus(chatIds: string[], businessId: string): Promise<void> {
+    // Clean up old metadata listeners
+    this.metadataListeners.forEach((unsub) => unsub());
+    this.metadataListeners.clear();
+
+    try {
+      await this.authenticateWithFirebase();
+    } catch (error) {
+      console.error('[FirebaseService] Failed to auth for unread status:', error);
+      return;
+    }
+
+    for (const chatId of chatIds) {
+      if (!chatId) continue;
+
+      const metadataRef = ref(this.db, `chats/${chatId}/metadata`);
+      const unsub = onValue(metadataRef, (snapshot) => {
+        if (!snapshot.exists()) return;
+
+        const meta = snapshot.val();
+        const lastTs = meta.lastMessageTimestamp || 0;
+        const lastReadTs = meta.businessLastReadAt || 0;
+        const lastSender = meta.lastSenderId || '';
+
+        // Unread if: there's a newer message AND it wasn't sent by the business
+        const isUnread = lastTs > lastReadTs && lastSender !== businessId;
+
+        this.unreadChatIdsSignal.update((set) => {
+          const next = new Set(set);
+          if (isUnread) {
+            next.add(chatId);
+          } else {
+            next.delete(chatId);
+          }
+          return next;
+        });
+      }, (error) => {
+        console.error(`[FirebaseService] Error watching metadata for ${chatId}:`, error);
+      });
+
+      this.metadataListeners.set(chatId, unsub);
+    }
   }
 
   /**

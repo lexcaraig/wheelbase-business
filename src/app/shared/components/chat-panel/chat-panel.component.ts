@@ -5,6 +5,8 @@ import {
   EventEmitter,
   OnInit,
   OnDestroy,
+  OnChanges,
+  SimpleChanges,
   signal,
   computed,
   effect,
@@ -181,8 +183,42 @@ import { AuthService } from '../../../core/auth/auth.service';
         }
       </div>
 
+      <!-- Error Banner -->
+      @if (firebaseService.error()) {
+        <div class="px-4 py-2 bg-error/10 text-error text-sm flex items-center gap-2">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>{{ firebaseService.error() }}</span>
+          <button (click)="retryConnection()" class="btn btn-ghost btn-xs">Retry</button>
+        </div>
+      }
+
+      <!-- Quick Responses -->
+      <div class="px-4 pt-3 flex flex-wrap gap-2 border-t border-neutral">
+        @for (response of quickResponses; track response) {
+          <button
+            (click)="sendQuickResponse(response)"
+            class="text-xs px-3 py-1.5 rounded-full border border-neutral
+                   hover:bg-primary/10 hover:border-primary transition-colors"
+            [disabled]="sending()"
+          >
+            {{ response }}
+          </button>
+        }
+      </div>
+
+      <!-- Send Error -->
+      @if (sendError()) {
+        <div class="px-4 py-2 bg-error/10 text-error text-sm flex items-center gap-2">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>{{ sendError() }}</span>
+          <button (click)="sendError.set(null)" class="btn btn-ghost btn-xs ml-auto">
+            <i class="pi pi-times"></i>
+          </button>
+        </div>
+      }
+
       <!-- Input -->
-      <div class="p-4 border-t border-neutral">
+      <div class="p-4">
         <form (submit)="sendMessage($event)" class="flex gap-2">
           <input
             type="text"
@@ -222,7 +258,7 @@ import { AuthService } from '../../../core/auth/auth.service';
   `,
   styles: []
 })
-export class ChatPanelComponent implements OnInit, OnDestroy, AfterViewChecked {
+export class ChatPanelComponent implements OnInit, OnDestroy, OnChanges, AfterViewChecked {
   @Input() chatId: string = '';
   @Input() customerName = signal<string>('Customer');
   @Input() customerAvatar = signal<string | null>(null);
@@ -237,9 +273,18 @@ export class ChatPanelComponent implements OnInit, OnDestroy, AfterViewChecked {
 
   newMessage = '';
   sending = signal<boolean>(false);
+  sendError = signal<string | null>(null);
   viewingImage = signal<string | null>(null);
 
+  quickResponses = [
+    'Order received! We\'ll process it shortly.',
+    'Your order is being prepared.',
+    'Your order is ready for pickup/delivery.',
+    'Thank you for your order!',
+  ];
+
   currentUserId = signal<string>('');
+  activeChatId = signal<string>('');
   messages = signal<ChatMessage[]>([]);
 
   private shouldScrollToBottom = true;
@@ -252,19 +297,20 @@ export class ChatPanelComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.firebaseService = firebaseService;
     this.authService = authService;
 
-    // Update current user ID when auth changes
+    // Update current user ID when auth changes (supports both business accounts and claimed providers)
     effect(() => {
-      const business = this.authService.business();
-      if (business) {
-        this.currentUserId.set(business.id);
+      const unified = this.authService.unifiedBusiness();
+      if (unified) {
+        this.currentUserId.set(unified.id);
       }
     });
 
-    // Update messages when they change in the service
+    // Update messages when they change in the service — uses activeChatId signal for reactivity
     effect(() => {
+      const chatId = this.activeChatId();
       const allMessages = this.firebaseService.messages();
-      if (this.chatId && allMessages.has(this.chatId)) {
-        const chatMessages = allMessages.get(this.chatId) || [];
+      if (chatId && allMessages.has(chatId)) {
+        const chatMessages = allMessages.get(chatId) || [];
         this.messages.set(chatMessages);
 
         // Check if new messages arrived
@@ -272,19 +318,45 @@ export class ChatPanelComponent implements OnInit, OnDestroy, AfterViewChecked {
           this.shouldScrollToBottom = true;
         }
         this.previousMessageCount = chatMessages.length;
+      } else {
+        this.messages.set([]);
+        this.previousMessageCount = 0;
       }
     });
   }
 
   ngOnInit(): void {
-    if (this.chatId) {
-      this.firebaseService.subscribeToChat(this.chatId);
+    this.switchToChat(this.chatId);
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['chatId'] && !changes['chatId'].firstChange) {
+      const oldChatId = changes['chatId'].previousValue;
+      const newChatId = changes['chatId'].currentValue;
+      if (oldChatId !== newChatId) {
+        // Unsubscribe from old chat, subscribe to new one
+        if (oldChatId) {
+          this.firebaseService.unsubscribeFromChat(oldChatId);
+        }
+        this.switchToChat(newChatId);
+      }
     }
   }
 
   ngOnDestroy(): void {
     if (this.chatId) {
       this.firebaseService.unsubscribeFromChat(this.chatId);
+    }
+  }
+
+  private switchToChat(chatId: string): void {
+    if (chatId) {
+      this.activeChatId.set(chatId);
+      this.newMessage = '';
+      this.sendError.set(null);
+      this.previousMessageCount = 0;
+      this.shouldScrollToBottom = true;
+      this.firebaseService.subscribeToChat(chatId);
     }
   }
 
@@ -336,22 +408,52 @@ export class ChatPanelComponent implements OnInit, OnDestroy, AfterViewChecked {
     this.viewingImage.set(url);
   }
 
+  async retryConnection(): Promise<void> {
+    this.firebaseService.clearError();
+    const chatId = this.activeChatId();
+    if (chatId) {
+      await this.firebaseService.subscribeToChat(chatId);
+    }
+  }
+
+  async sendQuickResponse(message: string): Promise<void> {
+    const chatId = this.activeChatId();
+    if (!chatId) return;
+
+    this.sending.set(true);
+    this.sendError.set(null);
+    try {
+      await this.firebaseService.sendMessage(chatId, message);
+      this.shouldScrollToBottom = true;
+    } catch (error) {
+      console.error('Error sending quick response:', error);
+      const msg = error instanceof Error ? error.message : 'Failed to send message';
+      this.sendError.set(msg);
+    } finally {
+      this.sending.set(false);
+    }
+  }
+
   async sendMessage(event: Event): Promise<void> {
     event.preventDefault();
 
+    const chatId = this.activeChatId();
     const content = this.newMessage.trim();
-    if (!content || !this.chatId) return;
+    if (!content || !chatId) return;
 
     this.sending.set(true);
+    this.sendError.set(null);
     this.newMessage = '';
 
     try {
-      await this.firebaseService.sendMessage(this.chatId, content);
+      await this.firebaseService.sendMessage(chatId, content);
       this.shouldScrollToBottom = true;
     } catch (error) {
       console.error('Error sending message:', error);
       // Restore message if send failed
       this.newMessage = content;
+      const msg = error instanceof Error ? error.message : 'Failed to send message';
+      this.sendError.set(msg);
     } finally {
       this.sending.set(false);
     }
