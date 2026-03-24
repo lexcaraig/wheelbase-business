@@ -1,5 +1,8 @@
-import { Injectable, signal, computed } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
 import { SupabaseService } from './supabase.service';
+import { PushNotificationService } from './push-notification.service';
+import { AuthService } from '../auth/auth.service';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import {
   Order,
   OrderItem,
@@ -51,10 +54,60 @@ export class OrderService {
     this.ordersSignal().filter(o => o.status === 'shipped').length
   );
 
+  private pushService = inject(PushNotificationService);
+  private authService = inject(AuthService);
+  private realtimeChannel: RealtimeChannel | null = null;
+  private newOrderCountSignal = signal<number>(0);
+
+  readonly newOrderCount = computed(() => this.newOrderCountSignal());
+
   constructor(private supabase: SupabaseService) {}
 
   clearError(): void {
     this.errorSignal.set(null);
+  }
+
+  subscribeToNewOrders(): void {
+    const unified = this.authService.unifiedBusiness();
+    if (!unified || this.realtimeChannel) return;
+
+    this.realtimeChannel = this.supabase.client
+      .channel('new-orders')
+      .on(
+        'postgres_changes' as any,
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'marketplace_orders',
+          filter: `business_id=eq.${unified.id}`,
+        },
+        (payload: any) => {
+          console.log('[Orders] New order received via Realtime:', payload.new?.id);
+          this.newOrderCountSignal.update(count => count + 1);
+          this.loadOrders();
+
+          const order = payload.new;
+          this.pushService.showLocalNotification(
+            'New Order Received!',
+            `Order #${(order?.id || '').substring(0, 8)} — ${order?.total_amount ? '₱' + order.total_amount : 'View details'}`,
+            { url: '/orders' },
+          );
+        }
+      )
+      .subscribe();
+
+    console.log('[Orders] Subscribed to new order notifications');
+  }
+
+  unsubscribeFromNewOrders(): void {
+    if (this.realtimeChannel) {
+      this.supabase.client.removeChannel(this.realtimeChannel);
+      this.realtimeChannel = null;
+    }
+  }
+
+  clearNewOrderCount(): void {
+    this.newOrderCountSignal.set(0);
   }
 
   /**

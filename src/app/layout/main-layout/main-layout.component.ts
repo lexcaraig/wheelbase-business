@@ -1,7 +1,10 @@
-import { Component, inject } from '@angular/core';
+import { Component, inject, computed, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterOutlet, RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
+import { FirebaseService } from '../../core/services/firebase.service';
+import { PushNotificationService } from '../../core/services/push-notification.service';
+import { OrderService } from '../../core/services/order.service';
 
 interface NavItem {
   label: string;
@@ -66,7 +69,10 @@ interface NavItem {
                     (click)="navigateTo(item.route)"
                   >
                     <i [class]="'pi ' + item.icon"></i>
-                    <span>{{ item.label }}</span>
+                    <span class="flex-1">{{ item.label }}</span>
+                    @if (item.route === '/orders' && unreadOrderCount() > 0) {
+                      <span class="badge badge-error badge-sm">{{ unreadOrderCount() }}</span>
+                    }
                   </a>
                 </li>
               }
@@ -112,9 +118,28 @@ interface NavItem {
   `,
   styles: []
 })
-export class MainLayoutComponent {
+export class MainLayoutComponent implements OnInit, OnDestroy {
   authService = inject(AuthService);
   private router = inject(Router);
+  private firebaseService = inject(FirebaseService);
+  private pushService = inject(PushNotificationService);
+  private orderService = inject(OrderService);
+
+  unreadOrderCount = computed(() => {
+    const unreadChats = this.firebaseService.unreadChatIds().size;
+    const newOrders = this.orderService.newOrderCount();
+    return unreadChats + newOrders;
+  });
+
+  ngOnInit(): void {
+    this.pushService.initialize();
+    this.pushService.requestPermission();
+    this.orderService.subscribeToNewOrders();
+  }
+
+  ngOnDestroy(): void {
+    this.orderService.unsubscribeFromNewOrders();
+  }
 
   navItems: NavItem[] = [
     { label: 'Dashboard', icon: 'pi-home', route: '/dashboard' },

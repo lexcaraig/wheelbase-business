@@ -31,6 +31,7 @@ const firebaseConfig = {
   projectId: 'wheelbase-d688c',
   storageBucket: 'wheelbase-d688c.firebasestorage.app',
   messagingSenderId: '249886728996',
+  appId: '1:249886728996:web:6f7ac9b03e830108cfc9b1',
 };
 
 export interface ChatMessage {
@@ -105,6 +106,10 @@ export class FirebaseService implements OnDestroy {
   readonly error = computed(() => this.errorSignal());
   readonly isFirebaseAuthenticated = computed(() => this.firebaseAuthenticatedSignal());
   readonly unreadChatIds = computed(() => this.unreadChatIdsSignal());
+
+  getApp(): FirebaseApp | null {
+    return this.app ?? null;
+  }
 
   constructor(
     private authService: AuthService,
